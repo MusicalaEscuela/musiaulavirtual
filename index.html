@@ -90,6 +90,7 @@
 
     <section class="class-shell">
       <div class="video-panel card">
+        <div id="stageArea" class="stage hidden" aria-live="polite"></div>
         <div id="jitsiContainer" class="jitsi-container">
           <div class="loading">
             <div class="spinner"></div>
@@ -102,22 +103,62 @@
       <aside class="tool-panel card">
         <nav class="tabs" aria-label="Herramientas de clase">
           <button class="tab active" data-tab="tab-aula">Aula</button>
-          <button class="tab" data-tab="tab-recursos">Recursos</button>
-          <button class="tab" data-tab="tab-ejercicio">Ejercicio</button>
-          <button class="tab" data-tab="tab-bitacora">Bitácora</button>
+          <button class="tab teacher-only" data-tab="tab-escenario">Escenario</button>
+          <button class="tab teacher-only" data-tab="tab-recursos">Recursos</button>
+          <button class="tab teacher-only" data-tab="tab-ejercicio">Ejercicio</button>
+          <button class="tab teacher-only" data-tab="tab-bitacora">Bitácora</button>
         </nav>
+
+        <section id="tab-escenario" class="tab-content">
+          <h2>Control del escenario</h2>
+          <p class="muted">Lo que lances aquí aparece en grande sobre el video de <strong>todos</strong> los participantes. El estudiante no puede cambiarlo, solo interactuar cuando tú lo permitas.</p>
+
+          <div class="mini-form">
+            <h3>Nota gigante</h3>
+            <label>
+              Nota
+              <select id="stageNote">
+                <option>Do</option>
+                <option>Re</option>
+                <option>Mi</option>
+                <option>Fa</option>
+                <option>Sol</option>
+                <option>La</option>
+                <option>Si</option>
+              </select>
+            </label>
+            <button id="btnStageNote" class="primary full">Mostrar nota gigante</button>
+          </div>
+
+          <div class="mini-form">
+            <h3>Secuencia animada</h3>
+            <p class="hint">Usa la nota inicial y el modo de la pestaña Ejercicio. Las notas se iluminan una por una al ritmo del BPM.</p>
+            <button id="btnStageSeq" class="primary full">Lanzar secuencia animada</button>
+          </div>
+
+          <div class="mini-form">
+            <h3>Juego: ¿qué nota sigue?</h3>
+            <p class="hint">El estudiante ve la pregunta con botones y tú recibes su respuesta al instante.</p>
+            <button id="btnStageQuiz" class="primary full">Lanzar juego</button>
+          </div>
+
+          <div class="actions wrap">
+            <button id="btnStageCelebrate" class="secondary">🎉 Celebrar</button>
+            <button id="btnStageClear" class="ghost">Limpiar escenario</button>
+          </div>
+        </section>
 
         <section id="tab-aula" class="tab-content active">
           <div class="section-head">
             <h2>Clase activa</h2>
-            <button id="sendState" class="tiny">Sincronizar ahora</button>
+            <button id="sendState" class="tiny teacher-only">Sincronizar ahora</button>
           </div>
 
-          <label>
+          <label class="teacher-only">
             Objetivo de la clase
             <textarea id="objectiveInput" rows="3" placeholder="Ej: Reconocer la secuencia de notas desde Re y cantar el patrón ascendente."></textarea>
           </label>
-          <button id="publishObjective" class="primary full">Publicar objetivo</button>
+          <button id="publishObjective" class="primary full teacher-only">Publicar objetivo</button>
 
           <div class="live-card">
             <p class="label">Objetivo visible</p>

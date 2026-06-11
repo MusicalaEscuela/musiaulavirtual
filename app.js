@@ -28,6 +28,8 @@
   let knownParticipants = new Map();
   let metronomeTimer = null;
   let audioContext = null;
+  let stageTimer = null;
+  let answeredQuizIds = new Set();
 
   let appState = {
     room: "",
@@ -36,6 +38,7 @@
     objective: "",
     activeResource: null,
     activeExercise: null,
+    stage: null,
     resources: defaultResources,
     responses: [],
     logs: []
@@ -77,7 +80,9 @@
       "responsesList", "resourceList", "addResource", "resourceTitle", "resourceDesc",
       "createResource", "rootNote", "exerciseMode", "scalePreview", "previewScale",
       "launchScale", "bpm", "toggleMetronome", "beatIndicator", "workedOn", "progress",
-      "homework", "saveLog", "exportLog", "clearLocal", "classLogList", "sendState"
+      "homework", "saveLog", "exportLog", "clearLocal", "classLogList", "sendState",
+      "stageArea", "stageNote", "btnStageNote", "btnStageSeq", "btnStageQuiz",
+      "btnStageCelebrate", "btnStageClear"
     ].forEach(id => dom[id] = document.getElementById(id));
 
     dom.tabs = Array.from(document.querySelectorAll(".tab"));
@@ -226,6 +231,58 @@
 
     dom.exportLog.addEventListener("click", exportJson);
     dom.clearLocal.addEventListener("click", clearLocalData);
+
+    dom.btnStageNote.addEventListener("click", () => {
+      launchStage({
+        kind: "bigNote",
+        note: dom.stageNote.value
+      });
+      toast("Nota gigante en pantalla de todos.");
+    });
+
+    dom.btnStageSeq.addEventListener("click", () => {
+      const exercise = buildScaleExercise();
+      launchStage({
+        kind: "sequence",
+        title: exercise.title,
+        sequence: exercise.sequence,
+        bpm: Math.max(40, Math.min(240, Number(dom.bpm.value) || 80))
+      });
+      toast("Secuencia animada lanzada.");
+    });
+
+    dom.btnStageQuiz.addEventListener("click", () => {
+      const root = dom.rootNote.value;
+      const index = NOTES.indexOf(root);
+      const correct = NOTES[(index + 1) % NOTES.length];
+      launchStage({
+        kind: "quiz",
+        question: `¿Qué nota sigue después de ${root}?`,
+        options: [...NOTES],
+        correct
+      });
+      toast("Juego lanzado. Espera la respuesta del estudiante.");
+    });
+
+    dom.btnStageCelebrate.addEventListener("click", () => {
+      launchStage({ kind: "celebrate" });
+      toast("🎉 Celebración enviada.");
+    });
+
+    dom.btnStageClear.addEventListener("click", () => {
+      appState.stage = null;
+      saveLocal();
+      renderStage();
+      broadcast({ type: "STATE_PATCH", patch: { stage: null } });
+      toast("Escenario limpio.");
+    });
+  }
+
+  function launchStage(stage) {
+    appState.stage = { id: cryptoId(), at: new Date().toISOString(), ...stage };
+    saveLocal();
+    renderStage();
+    broadcast({ type: "STATE_PATCH", patch: { stage: appState.stage } });
   }
 
   function enterClass({ room, displayName, role }) {
@@ -238,6 +295,9 @@
     appState.displayName = displayName;
     appState.role = role || "docente";
     saveLocal();
+
+    document.body.classList.toggle("role-estudiante", appState.role === "estudiante");
+    document.body.classList.toggle("role-docente", appState.role !== "estudiante");
 
     const url = buildClassUrl(true);
     history.replaceState(null, "", url);
@@ -409,6 +469,7 @@
       objective: appState.objective,
       activeResource: appState.activeResource,
       activeExercise: appState.activeExercise,
+      stage: appState.stage,
       resources: appState.resources,
       responses: appState.responses.slice(0, 20)
     };
@@ -480,7 +541,7 @@
   }
 
   function mergeState(incoming) {
-    const allowed = ["objective", "activeResource", "activeExercise", "resources", "responses"];
+    const allowed = ["objective", "activeResource", "activeExercise", "stage", "resources", "responses"];
     allowed.forEach(key => {
       if (incoming[key] !== undefined) appState[key] = incoming[key];
     });
@@ -495,6 +556,7 @@
 
   function renderAll() {
     renderAula();
+    renderStage();
     renderResources();
     renderScalePreview();
     renderResponses();
@@ -522,6 +584,124 @@
     } else {
       dom.activeExerciseTitle.textContent = "Sin actividad";
       dom.activeExerciseBody.textContent = "Lanza un ejercicio desde la pestaña Ejercicio.";
+    }
+  }
+
+  function renderStage() {
+    if (!dom.stageArea) return;
+
+    if (stageTimer) {
+      clearInterval(stageTimer);
+      stageTimer = null;
+    }
+
+    const stage = appState.stage;
+    if (!stage) {
+      dom.stageArea.classList.add("hidden");
+      dom.stageArea.innerHTML = "";
+      return;
+    }
+
+    dom.stageArea.classList.remove("hidden");
+    const isTeacher = appState.role !== "estudiante";
+    const closeButton = isTeacher
+      ? `<button class="stage-close ghost tiny" data-stage-close>✕ Cerrar</button>`
+      : "";
+
+    if (stage.kind === "bigNote") {
+      dom.stageArea.innerHTML = `
+        ${closeButton}
+        <p class="label">Atención a esta nota</p>
+        <div class="big-note">${escapeHtml(stage.note)}</div>
+      `;
+    }
+
+    if (stage.kind === "sequence") {
+      dom.stageArea.innerHTML = `
+        ${closeButton}
+        <p class="label">${escapeHtml(stage.title || "Secuencia")}</p>
+        <div class="stage-sequence">
+          ${stage.sequence.map(note => `<span class="note-pill big">${escapeHtml(note)}</span>`).join("")}
+        </div>
+      `;
+      const pills = Array.from(dom.stageArea.querySelectorAll(".note-pill"));
+      let index = 0;
+      const interval = 60000 / (stage.bpm || 80);
+      const step = () => {
+        pills.forEach((pill, i) => pill.classList.toggle("lit", i === index));
+        index = (index + 1) % pills.length;
+      };
+      step();
+      stageTimer = setInterval(step, interval);
+    }
+
+    if (stage.kind === "quiz") {
+      const answered = answeredQuizIds.has(stage.id);
+      dom.stageArea.innerHTML = `
+        ${closeButton}
+        <p class="label">Juego musical</p>
+        <h2 class="stage-question">${escapeHtml(stage.question)}</h2>
+        <div class="stage-options">
+          ${stage.options.map(note => `
+            <button class="quiz-option" data-quiz-answer="${escapeHtml(note)}" ${answered ? "disabled" : ""}>${escapeHtml(note)}</button>
+          `).join("")}
+        </div>
+        <p class="hint stage-hint">${isTeacher ? "Vista previa: el estudiante puede tocar las notas." : "Toca la nota correcta 👇"}</p>
+      `;
+
+      dom.stageArea.querySelectorAll("[data-quiz-answer]").forEach(button => {
+        button.addEventListener("click", () => {
+          const answer = button.dataset.quizAnswer;
+          const correct = answer === stage.correct;
+          answeredQuizIds.add(stage.id);
+
+          dom.stageArea.querySelectorAll("[data-quiz-answer]").forEach(b => {
+            b.disabled = true;
+            if (b.dataset.quizAnswer === stage.correct) b.classList.add("correct");
+          });
+          button.classList.add(correct ? "correct" : "wrong");
+
+          const hint = dom.stageArea.querySelector(".stage-hint");
+          if (hint) hint.textContent = correct ? "¡Correcto! 🎉" : `Casi... la respuesta era ${stage.correct}.`;
+
+          const response = {
+            id: cryptoId(),
+            name: appState.displayName || "Participante",
+            role: appState.role,
+            text: `${correct ? "✅" : "❌"} Respondió "${answer}" — ${stage.question}`,
+            at: new Date().toISOString()
+          };
+          appState.responses.unshift(response);
+          saveLocal();
+          renderResponses();
+          broadcast({ type: "RESPONSE", response });
+        });
+      });
+    }
+
+    if (stage.kind === "celebrate") {
+      const pieces = Array.from({ length: 40 }, () => {
+        const left = Math.random() * 100;
+        const delay = Math.random() * 1.4;
+        const duration = 2.2 + Math.random() * 1.8;
+        const emoji = ["🎵", "🎶", "⭐", "🎉", "💜"][Math.floor(Math.random() * 5)];
+        return `<span class="confetti" style="left:${left}%;animation-delay:${delay}s;animation-duration:${duration}s">${emoji}</span>`;
+      }).join("");
+
+      dom.stageArea.innerHTML = `
+        ${closeButton}
+        <div class="celebrate-wrap">${pieces}<h2 class="stage-question">¡Muy bien! 🎉</h2></div>
+      `;
+    }
+
+    const close = dom.stageArea.querySelector("[data-stage-close]");
+    if (close) {
+      close.addEventListener("click", () => {
+        appState.stage = null;
+        saveLocal();
+        renderStage();
+        broadcast({ type: "STATE_PATCH", patch: { stage: null } });
+      });
     }
   }
 
@@ -715,6 +895,7 @@
       objective: "",
       activeResource: null,
       activeExercise: null,
+      stage: null,
       resources: defaultResources,
       responses: [],
       logs: []

@@ -322,11 +322,148 @@ textarea:focus {
   overflow: hidden;
 }
 
+.video-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .jitsi-container {
   width: 100%;
-  height: 100%;
-  min-height: 620px;
+  flex: 1 1 auto;
+  min-height: 280px;
   position: relative;
+}
+
+/* ===== Escenario controlado por el docente ===== */
+
+.role-estudiante .teacher-only {
+  display: none !important;
+}
+
+.stage {
+  position: relative;
+  flex: 0 0 auto;
+  max-height: 52%;
+  overflow: hidden;
+  padding: 18px 22px 22px;
+  border-bottom: 1px solid var(--line);
+  background:
+    radial-gradient(circle at top right, rgba(255, 111, 216, 0.18), transparent 18rem),
+    rgba(0, 0, 0, 0.25);
+  text-align: center;
+  animation: stage-in 0.35s ease;
+}
+
+@keyframes stage-in {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.stage-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.big-note {
+  font-size: clamp(4rem, 14vw, 8.5rem);
+  font-weight: 900;
+  line-height: 1.05;
+  background: linear-gradient(135deg, var(--cream), var(--pink));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: big-note-pop 0.5s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+@keyframes big-note-pop {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.stage-sequence {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.note-pill.big {
+  font-size: 1.3rem;
+  padding: 0.8rem 1.1rem;
+  opacity: 0.45;
+  transform: scale(0.95);
+  transition: transform 0.12s ease, opacity 0.12s ease, box-shadow 0.12s ease;
+}
+
+.note-pill.big.lit {
+  opacity: 1;
+  transform: scale(1.18);
+  box-shadow: 0 0 26px rgba(255, 111, 216, 0.65);
+}
+
+.stage-question {
+  font-size: clamp(1.3rem, 3.4vw, 2rem);
+  margin: 0.4rem 0 1rem;
+}
+
+.stage-options {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.quiz-option {
+  min-width: 64px;
+  font-size: 1.15rem;
+  font-weight: 900;
+  padding: 0.85rem 1.1rem;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line);
+}
+
+.quiz-option:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.quiz-option.correct {
+  background: var(--good);
+  color: #0d321e;
+  opacity: 1;
+  border-color: transparent;
+}
+
+.quiz-option.wrong {
+  background: var(--danger);
+  opacity: 1;
+  border-color: transparent;
+}
+
+.stage-hint {
+  margin: 0.9rem 0 0;
+}
+
+.celebrate-wrap {
+  position: relative;
+  min-height: 160px;
+  display: grid;
+  place-items: center;
+}
+
+.confetti {
+  position: absolute;
+  top: -2rem;
+  font-size: 1.4rem;
+  animation: confetti-fall linear infinite;
+}
+
+@keyframes confetti-fall {
+  from { transform: translateY(-1rem) rotate(0turn); opacity: 1; }
+  to { transform: translateY(240px) rotate(1.5turn); opacity: 0; }
 }
 
 .jitsi-container iframe {
@@ -366,7 +503,7 @@ textarea:focus {
 
 .tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
   gap: 6px;
   padding: 10px;
   border-bottom: 1px solid var(--line);
