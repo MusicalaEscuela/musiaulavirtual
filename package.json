@@ -1,0 +1,9 @@
+{
+  "name": "musiaula-virtual-prototipo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Prototipo estático de MusiAula Virtual sin Firebase con Jitsi Meet.",
+  "scripts": {
+    "start": "python -m http.server 8080"
+  }
+}

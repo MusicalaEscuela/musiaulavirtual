@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MusiAula Virtual - Prototipo</title>
+  <meta name="description" content="Prototipo sin Firebase de aula virtual Musicala con videollamada Jitsi y herramientas interactivas." />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <section id="lobby" class="lobby">
+    <div class="brand">
+      <div class="brand-mark">M</div>
+      <div>
+        <p class="eyebrow">Prototipo sin Firebase</p>
+        <h1>MusiAula Virtual</h1>
+        <p class="subtitle">Videollamada + recursos + ejercicios + bitácora. Porque compartir pantalla ya tuvo demasiada fama para tan poquito esfuerzo.</p>
+      </div>
+    </div>
+
+    <div class="lobby-grid">
+      <form id="joinForm" class="card form-card">
+        <h2>Entrar al aula</h2>
+        <label>
+          Tu nombre
+          <input id="displayName" name="displayName" placeholder="Profe Cata / Alek / Estudiante" autocomplete="name" required />
+        </label>
+
+        <label>
+          Rol
+          <select id="role" name="role">
+            <option value="docente">Docente</option>
+            <option value="estudiante">Estudiante</option>
+            <option value="observador">Observador</option>
+          </select>
+        </label>
+
+        <label>
+          Nombre de sala
+          <div class="inline-input">
+            <input id="roomName" name="roomName" required />
+            <button type="button" id="randomRoom" class="ghost">Aleatoria</button>
+          </div>
+        </label>
+
+        <div class="actions">
+          <button type="submit" class="primary">Entrar a la clase</button>
+          <button type="button" id="copyLobbyLink" class="secondary">Copiar enlace para otro dispositivo</button>
+        </div>
+
+        <p class="hint">
+          Para probar con dos dispositivos: abre esta misma dirección en ambos y usa exactamente la misma sala.
+        </p>
+      </form>
+
+      <div class="card info-card">
+        <h2>Qué prueba esta versión</h2>
+        <ul class="feature-list">
+          <li>Videollamada integrada con Jitsi.</li>
+          <li>Panel lateral de clase con objetivo, recursos y actividad activa.</li>
+          <li>Sincronización básica entre participantes usando mensajes de datos de Jitsi.</li>
+          <li>Generador de escalas simples desde cualquier nota.</li>
+          <li>Metrónomo local, notas rápidas, bitácora y exportación JSON.</li>
+        </ul>
+        <div class="warning">
+          <strong>Importante:</strong> sin backend no hay base de datos real. Lo que se sincroniza ocurre mientras ambos están dentro de la sala. Lo guardado queda local en el navegador.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <main id="app" class="app hidden">
+    <header class="topbar">
+      <div class="brand compact">
+        <div class="brand-mark">M</div>
+        <div>
+          <p class="eyebrow">MusiAula Virtual</p>
+          <h1 id="roomTitle">Sala</h1>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span id="connectionStatus" class="status offline">Preparando aula</span>
+        <button id="copyClassLink" class="secondary">Copiar enlace</button>
+        <a id="openExternal" class="secondary link-button" target="_blank" rel="noreferrer">Abrir Jitsi aparte</a>
+        <button id="leaveClass" class="danger">Salir</button>
+      </div>
+    </header>
+
+    <section class="class-shell">
+      <div class="video-panel card">
+        <div id="jitsiContainer" class="jitsi-container">
+          <div class="loading">
+            <div class="spinner"></div>
+            <p>Cargando videollamada...</p>
+            <small>Si Jitsi se pone dramático, usa “Abrir Jitsi aparte”.</small>
+          </div>
+        </div>
+      </div>
+
+      <aside class="tool-panel card">
+        <nav class="tabs" aria-label="Herramientas de clase">
+          <button class="tab active" data-tab="tab-aula">Aula</button>
+          <button class="tab" data-tab="tab-recursos">Recursos</button>
+          <button class="tab" data-tab="tab-ejercicio">Ejercicio</button>
+          <button class="tab" data-tab="tab-bitacora">Bitácora</button>
+        </nav>
+
+        <section id="tab-aula" class="tab-content active">
+          <div class="section-head">
+            <h2>Clase activa</h2>
+            <button id="sendState" class="tiny">Sincronizar ahora</button>
+          </div>
+
+          <label>
+            Objetivo de la clase
+            <textarea id="objectiveInput" rows="3" placeholder="Ej: Reconocer la secuencia de notas desde Re y cantar el patrón ascendente."></textarea>
+          </label>
+          <button id="publishObjective" class="primary full">Publicar objetivo</button>
+
+          <div class="live-card">
+            <p class="label">Objetivo visible</p>
+            <h3 id="objectiveView">Sin objetivo publicado todavía</h3>
+          </div>
+
+          <div class="live-card">
+            <p class="label">Recurso activo</p>
+            <h3 id="activeResourceTitle">Ninguno</h3>
+            <p id="activeResourceDesc">Activa un recurso desde la pestaña Recursos.</p>
+          </div>
+
+          <div class="live-card">
+            <p class="label">Actividad activa</p>
+            <h3 id="activeExerciseTitle">Sin actividad</h3>
+            <div id="activeExerciseBody" class="exercise-preview">Lanza un ejercicio desde la pestaña Ejercicio.</div>
+          </div>
+
+          <div class="quick-responses">
+            <button data-response="Listo ✅">Listo ✅</button>
+            <button data-response="Necesito repetir 🔁">Necesito repetir 🔁</button>
+            <button data-response="Voy perdido 😵‍💫">Voy perdido 😵‍💫</button>
+          </div>
+
+          <div>
+            <p class="label">Respuestas recibidas</p>
+            <div id="responsesList" class="log-list empty">Aún no hay respuestas.</div>
+          </div>
+        </section>
+
+        <section id="tab-recursos" class="tab-content">
+          <div class="section-head">
+            <h2>Recursos</h2>
+            <button id="addResource" class="tiny">Agregar demo</button>
+          </div>
+
+          <div id="resourceList" class="resource-list"></div>
+
+          <div class="mini-form">
+            <h3>Crear recurso rápido</h3>
+            <label>
+              Título
+              <input id="resourceTitle" placeholder="Ej: Secuencia de notas desde Sol" />
+            </label>
+            <label>
+              Descripción o enlace
+              <textarea id="resourceDesc" rows="3" placeholder="Pega aquí una instrucción, link de YouTube, PDF, imagen, etc."></textarea>
+            </label>
+            <button id="createResource" class="secondary full">Guardar recurso local</button>
+          </div>
+        </section>
+
+        <section id="tab-ejercicio" class="tab-content">
+          <h2>Ejercicio de notas</h2>
+          <p class="muted">Primer prototipo: construcción de la secuencia desde cada nota. Básico, útil y sin fuegos artificiales innecesarios.</p>
+
+          <div class="exercise-grid">
+            <label>
+              Nota inicial
+              <select id="rootNote">
+                <option>Do</option>
+                <option>Re</option>
+                <option>Mi</option>
+                <option>Fa</option>
+                <option>Sol</option>
+                <option>La</option>
+                <option>Si</option>
+              </select>
+            </label>
+
+            <label>
+              Modo
+              <select id="exerciseMode">
+                <option value="asc">Ascendente</option>
+                <option value="desc">Descendente</option>
+                <option value="salteado">Salteado simple</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="scalePreview" class="scale-preview"></div>
+
+          <div class="actions wrap">
+            <button id="previewScale" class="secondary">Actualizar vista</button>
+            <button id="launchScale" class="primary">Lanzar ejercicio</button>
+          </div>
+
+          <hr />
+
+          <h2>Metrónomo local</h2>
+          <div class="metronome">
+            <label>
+              BPM
+              <input id="bpm" type="number" min="40" max="240" value="80" />
+            </label>
+            <button id="toggleMetronome" class="secondary">Iniciar</button>
+            <span id="beatIndicator" class="beat">●</span>
+          </div>
+
+          <p class="hint">El metrónomo es local en cada dispositivo. Sin backend no queda perfectamente sincronizado, porque la física insiste en existir.</p>
+        </section>
+
+        <section id="tab-bitacora" class="tab-content">
+          <h2>Bitácora de clase</h2>
+
+          <label>
+            Lo trabajado
+            <textarea id="workedOn" rows="3" placeholder="Ej: Secuencia desde Re, lectura rítmica básica, respiración..."></textarea>
+          </label>
+          <label>
+            Avance observado
+            <textarea id="progress" rows="3" placeholder="Ej: Identifica mejor el orden de notas, pero se confunde al volver a Do."></textarea>
+          </label>
+          <label>
+            Tarea
+            <textarea id="homework" rows="3" placeholder="Ej: Practicar 5 minutos diarios secuencia desde Do, Re y Sol."></textarea>
+          </label>
+
+          <div class="actions wrap">
+            <button id="saveLog" class="primary">Guardar entrada</button>
+            <button id="exportLog" class="secondary">Exportar JSON</button>
+            <button id="clearLocal" class="ghost">Limpiar local</button>
+          </div>
+
+          <div>
+            <p class="label">Historial local</p>
+            <div id="classLogList" class="log-list empty">Aún no hay registros.</div>
+          </div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script src="https://meet.jit.si/external_api.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
