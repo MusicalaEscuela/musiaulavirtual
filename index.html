@@ -58,14 +58,13 @@
       <div class="card info-card">
         <h2>Qué prueba esta versión</h2>
         <ul class="feature-list">
-          <li>Videollamada integrada con Jitsi.</li>
-          <li>Panel lateral de clase con objetivo, recursos y actividad activa.</li>
-          <li>Sincronización básica entre participantes usando mensajes de datos de Jitsi.</li>
-          <li>Generador de escalas simples desde cualquier nota.</li>
-          <li>Metrónomo local, notas rápidas, bitácora y exportación JSON.</li>
+          <li>Videollamada 1 a 1 propia (WebRTC), sin Jitsi ni iframes externos.</li>
+          <li>Escenario interactivo controlado por el docente: nota gigante, secuencias animadas, juego y celebración.</li>
+          <li>Sincronización en tiempo real con Firebase Realtime Database.</li>
+          <li>Generador de escalas, metrónomo, respuestas rápidas y bitácora.</li>
         </ul>
         <div class="warning">
-          <strong>Importante:</strong> sin backend no hay base de datos real. Lo que se sincroniza ocurre mientras ambos están dentro de la sala. Lo guardado queda local en el navegador.
+          <strong>Importante:</strong> esta versión está pensada para clases 1 a 1 (un docente y un estudiante). El estado del aula vive en Firebase mientras dura la sesión; la bitácora queda local en cada navegador.
         </div>
       </div>
     </div>
@@ -83,7 +82,6 @@
       <div class="top-actions">
         <span id="connectionStatus" class="status offline">Preparando aula</span>
         <button id="copyClassLink" class="secondary">Copiar enlace</button>
-        <a id="openExternal" class="secondary link-button" target="_blank" rel="noreferrer">Abrir Jitsi aparte</a>
         <button id="leaveClass" class="danger">Salir</button>
       </div>
     </header>
@@ -91,11 +89,18 @@
     <section class="class-shell">
       <div class="video-panel card">
         <div id="stageArea" class="stage hidden" aria-live="polite"></div>
-        <div id="jitsiContainer" class="jitsi-container">
-          <div class="loading">
+        <div id="videoArea" class="video-area">
+          <video id="remoteVideo" autoplay playsinline></video>
+          <div id="remotePlaceholder" class="remote-placeholder">
             <div class="spinner"></div>
-            <p>Cargando videollamada...</p>
-            <small>Si Jitsi se pone dramático, usa “Abrir Jitsi aparte”.</small>
+            <p>Esperando al otro participante...</p>
+            <small>Comparte el enlace de la sala para que se conecte.</small>
+          </div>
+          <video id="localVideo" autoplay playsinline muted></video>
+          <div class="video-controls">
+            <button id="toggleMic" class="vc-btn" title="Silenciar micrófono">🎙️</button>
+            <button id="toggleCam" class="vc-btn" title="Apagar cámara">📷</button>
+            <button id="reconnectVideo" class="vc-btn teacher-only" title="Reintentar conexión de video">↻</button>
           </div>
         </div>
       </div>
@@ -292,7 +297,6 @@
     </section>
   </main>
 
-  <script src="https://meet.jit.si/external_api.js"></script>
-  <script src="./app.js"></script>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

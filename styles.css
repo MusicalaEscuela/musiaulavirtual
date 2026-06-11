@@ -328,11 +328,71 @@ textarea:focus {
   min-height: 0;
 }
 
-.jitsi-container {
+/* ===== Área de video propia (WebRTC) ===== */
+
+.video-area {
   width: 100%;
   flex: 1 1 auto;
   min-height: 280px;
   position: relative;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+#remoteVideo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: #0a0512;
+}
+
+#localVideo {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  width: clamp(120px, 22%, 220px);
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 16px;
+  border: 2px solid var(--line);
+  background: #0a0512;
+  box-shadow: var(--shadow);
+}
+
+.remote-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.75rem;
+  text-align: center;
+  color: var(--muted);
+  padding: 2rem;
+  background: rgba(10, 5, 18, 0.75);
+}
+
+.video-controls {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+}
+
+.vc-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  font-size: 1.25rem;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(8px);
+}
+
+.vc-btn.off {
+  background: rgba(255, 95, 109, 0.65);
 }
 
 /* ===== Escenario controlado por el docente ===== */
