@@ -3,26 +3,67 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MusiAula Virtual - Prototipo</title>
-  <meta name="description" content="Prototipo sin Firebase de aula virtual Musicala con videollamada Jitsi y herramientas interactivas." />
+  <title>MusiAula Virtual · Musicala</title>
+  <meta name="description" content="Aula virtual de Musicala para clases de música 1 a 1: video propio, metrónomo sincronizado, ejercicios interactivos y bitácora." />
+  <link rel="icon" type="image/png" href="./logo.png" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
 
-  <section id="lobby" class="lobby">
+  <!-- ===== Pantalla de inicio de sesión ===== -->
+  <section id="authGate" class="auth-gate">
+    <div class="auth-card card">
+      <img src="./logo.png" alt="Musicala" class="auth-logo" />
+      <h1>MusiAula Virtual</h1>
+      <p class="subtitle small">El aula de música en línea de Musicala. Inicia sesión para entrar a tu clase.</p>
+
+      <button id="googleLogin" class="google-btn">
+        <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.1 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.1 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C41.4 35.4 44 30.1 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>
+        Continuar con Google
+      </button>
+
+      <div class="divider"><span>o con tu correo</span></div>
+
+      <form id="emailForm" class="email-form">
+        <label>
+          Correo
+          <input id="authEmail" type="email" autocomplete="email" placeholder="tu@correo.com" required />
+        </label>
+        <label>
+          Contraseña
+          <input id="authPassword" type="password" autocomplete="current-password" minlength="6" placeholder="Mínimo 6 caracteres" required />
+        </label>
+        <div class="actions">
+          <button type="submit" class="primary full">Iniciar sesión</button>
+        </div>
+        <div class="actions">
+          <button type="button" id="registerBtn" class="secondary full">Crear cuenta nueva</button>
+        </div>
+        <p class="hint center"><button type="button" id="resetPassword" class="link-plain">¿Olvidaste tu contraseña?</button></p>
+      </form>
+    </div>
+  </section>
+
+  <!-- ===== Lobby ===== -->
+  <section id="lobby" class="lobby hidden">
     <div class="brand">
-      <div class="brand-mark">M</div>
+      <img src="./logo.png" alt="Musicala" class="brand-logo" />
       <div>
-        <p class="eyebrow">Prototipo sin Firebase</p>
+        <p class="eyebrow">Aula virtual de Musicala</p>
         <h1>MusiAula Virtual</h1>
-        <p class="subtitle">Videollamada + recursos + ejercicios + bitácora. Porque compartir pantalla ya tuvo demasiada fama para tan poquito esfuerzo.</p>
+        <p class="subtitle">Clases de música 1 a 1 con video propio, metrónomo sincronizado, ejercicios interactivos y bitácora.</p>
       </div>
     </div>
 
     <div class="lobby-grid">
       <form id="joinForm" class="card form-card">
-        <h2>Entrar al aula</h2>
+        <div class="section-head">
+          <h2>Entrar al aula</h2>
+          <button type="button" id="logoutBtn" class="tiny">Cerrar sesión</button>
+        </div>
+        <p class="hint" id="userBadge"></p>
+
         <label>
           Tu nombre
           <input id="displayName" name="displayName" placeholder="Profe Cata / Alek / Estudiante" autocomplete="name" required />
@@ -56,30 +97,34 @@
       </form>
 
       <div class="card info-card">
-        <h2>Qué prueba esta versión</h2>
+        <h2>Qué incluye esta versión</h2>
         <ul class="feature-list">
-          <li>Videollamada 1 a 1 propia (WebRTC), sin Jitsi ni iframes externos.</li>
-          <li>Escenario interactivo controlado por el docente: nota gigante, secuencias animadas, juego y celebración.</li>
-          <li>Sincronización en tiempo real con Firebase Realtime Database.</li>
-          <li>Generador de escalas, metrónomo, respuestas rápidas y bitácora.</li>
+          <li>Videollamada 1 a 1 propia (WebRTC), sin servicios externos.</li>
+          <li>Metrónomo <strong>sincronizado</strong>: docente y estudiante escuchan el mismo pulso.</li>
+          <li>Juego de pulso: el estudiante marca el ritmo y el docente ve qué tan exacto va.</li>
+          <li>Modo música: audio sin filtros de voz para escuchar el instrumento real.</li>
+          <li>Panel de diagnóstico de conexión (latencia, jitter, pérdida de paquetes).</li>
+          <li>Escenario interactivo, generador de escalas, respuestas rápidas y bitácora.</li>
         </ul>
         <div class="warning">
-          <strong>Importante:</strong> esta versión está pensada para clases 1 a 1 (un docente y un estudiante). El estado del aula vive en Firebase mientras dura la sesión; la bitácora queda local en cada navegador.
+          <strong>Importante:</strong> pensado para clases 1 a 1 (un docente y un estudiante). Para escuchar bien el metrónomo y el instrumento, usa <strong>audífonos</strong> en ambos lados.
         </div>
       </div>
     </div>
   </section>
 
+  <!-- ===== Aula ===== -->
   <main id="app" class="app hidden">
     <header class="topbar">
       <div class="brand compact">
-        <div class="brand-mark">M</div>
+        <img src="./logo.png" alt="Musicala" class="brand-logo small" />
         <div>
           <p class="eyebrow">MusiAula Virtual</p>
           <h1 id="roomTitle">Sala</h1>
         </div>
       </div>
       <div class="top-actions">
+        <span id="metroChip" class="status metro-chip hidden">♩ Metrónomo</span>
         <span id="connectionStatus" class="status offline">Preparando aula</span>
         <button id="copyClassLink" class="secondary">Copiar enlace</button>
         <button id="leaveClass" class="danger">Salir</button>
@@ -97,9 +142,12 @@
             <small>Comparte el enlace de la sala para que se conecte.</small>
           </div>
           <video id="localVideo" autoplay playsinline muted></video>
+          <div id="statsPanel" class="stats-panel hidden"></div>
           <div class="video-controls">
             <button id="toggleMic" class="vc-btn" title="Silenciar micrófono">🎙️</button>
             <button id="toggleCam" class="vc-btn" title="Apagar cámara">📷</button>
+            <button id="toggleMusicMode" class="vc-btn" title="Modo música: audio sin filtros de voz (usa audífonos)">🎼</button>
+            <button id="toggleStats" class="vc-btn" title="Diagnóstico de conexión">📊</button>
             <button id="reconnectVideo" class="vc-btn teacher-only" title="Reintentar conexión de video">↻</button>
           </div>
         </div>
@@ -147,6 +195,12 @@
             <button id="btnStageQuiz" class="primary full">Lanzar juego</button>
           </div>
 
+          <div class="mini-form">
+            <h3>Juego de pulso 🥁</h3>
+            <p class="hint">Enciende el metrónomo sincronizado y el estudiante marca cada pulso tocando un botón. Tú ves en vivo qué tan exacto va (adelantado, atrasado o en el pulso).</p>
+            <button id="btnStagePulse" class="primary full">Lanzar juego de pulso</button>
+          </div>
+
           <div class="actions wrap">
             <button id="btnStageCelebrate" class="secondary">🎉 Celebrar</button>
             <button id="btnStageClear" class="ghost">Limpiar escenario</button>
@@ -180,6 +234,14 @@
             <p class="label">Actividad activa</p>
             <h3 id="activeExerciseTitle">Sin actividad</h3>
             <div id="activeExerciseBody" class="exercise-preview">Lanza un ejercicio desde la pestaña Ejercicio.</div>
+          </div>
+
+          <div class="live-card">
+            <p class="label">Metrónomo de la clase</p>
+            <div class="metro-live">
+              <span id="metroStateText">Apagado</span>
+              <span id="beatIndicatorAula" class="beat">●</span>
+            </div>
           </div>
 
           <div class="quick-responses">
@@ -218,7 +280,7 @@
 
         <section id="tab-ejercicio" class="tab-content">
           <h2>Ejercicio de notas</h2>
-          <p class="muted">Primer prototipo: construcción de la secuencia desde cada nota. Básico, útil y sin fuegos artificiales innecesarios.</p>
+          <p class="muted">Construcción de la secuencia desde cada nota. Básico, útil y sin fuegos artificiales innecesarios.</p>
 
           <div class="exercise-grid">
             <label>
@@ -253,17 +315,26 @@
 
           <hr />
 
-          <h2>Metrónomo local</h2>
+          <h2>Metrónomo sincronizado</h2>
           <div class="metronome">
             <label>
               BPM
               <input id="bpm" type="number" min="40" max="240" value="80" />
             </label>
+            <label>
+              Compás
+              <select id="meter">
+                <option value="0">Sin acento</option>
+                <option value="2">2/4</option>
+                <option value="3">3/4</option>
+                <option value="4" selected>4/4</option>
+              </select>
+            </label>
             <button id="toggleMetronome" class="secondary">Iniciar</button>
             <span id="beatIndicator" class="beat">●</span>
           </div>
 
-          <p class="hint">El metrónomo es local en cada dispositivo. Sin backend no queda perfectamente sincronizado, porque la física insiste en existir.</p>
+          <p class="hint">Suena en <strong>ambos</strong> dispositivos al mismo tiempo (sincronizado con el reloj del servidor). Cada lado lo genera localmente, así que no le afecta la latencia del video.</p>
         </section>
 
         <section id="tab-bitacora" class="tab-content">

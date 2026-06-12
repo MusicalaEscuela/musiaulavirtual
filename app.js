@@ -3,6 +3,11 @@ import {
   getDatabase, ref, set, update, push, remove, get,
   onValue, onChildAdded, onDisconnect, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
+import {
+  getAuth, onAuthStateChanged, signOut,
+  GoogleAuthProvider, signInWithPopup,
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { firebaseConfig } from "./firebase-config.js";
 
 const NOTES = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si"];
@@ -34,22 +39,33 @@ const defaultResources = [
 
 const dom = {};
 let db = null;
+let auth = null;
+let currentUser = null;
 let firebaseReady = false;
 let roomPath = null;
 let presenceRef = null;
 let participantsCount = 0;
 let unsubscribers = [];
+let pendingAutoJoin = null;
 
 let peer = null;
 let localStream = null;
 let remoteConnected = false;
 let micOn = true;
 let camOn = true;
+let musicMode = false;
+let statsTimer = null;
 
-let metronomeTimer = null;
 let audioContext = null;
 let stageTimer = null;
 let answeredQuizIds = new Set();
+
+// Metrónomo sincronizado: estado compartido + reloj del servidor
+let serverTimeOffset = 0;
+let metro = null;            // { running, bpm, meter, startAt } (startAt en tiempo de servidor)
+let metroSchedulerTimer = null;
+let metroNextBeat = 0;       // índice del próximo pulso a agendar
+let pulseTapsUnsub = null;
 
 let appState = {
   room: "",
@@ -73,6 +89,7 @@ function init() {
   try {
     const app = initializeApp(firebaseConfig);
     db = getDatabase(app);
+    auth = getAuth(app);
     firebaseReady = true;
   } catch (error) {
     console.error("No se pudo inicializar Firebase", error);
@@ -91,13 +108,100 @@ function init() {
   setupEvents();
   renderAll();
 
-  if (roomParam && nameParam) {
-    enterClass({
-      room: roomParam,
-      displayName: nameParam,
-      role: roleParam || "docente"
-    });
+  if (roomParam) {
+    pendingAutoJoin = { room: roomParam, name: nameParam, role: roleParam };
   }
+
+  if (!auth) return;
+
+  onAuthStateChanged(auth, user => {
+    currentUser = user;
+    if (user) {
+      dom.authGate.classList.add("hidden");
+      dom.userBadge.textContent = `Sesión: ${user.email || user.displayName || "usuario"}`;
+      if (!dom.displayName.value && user.displayName) {
+        dom.displayName.value = user.displayName;
+      }
+      // Reloj del servidor para el metrónomo sincronizado
+      onValue(ref(db, ".info/serverTimeOffset"), snap => {
+        serverTimeOffset = snap.val() || 0;
+      });
+
+      if (pendingAutoJoin) {
+        const { room, name, role } = pendingAutoJoin;
+        pendingAutoJoin = null;
+        enterClass({
+          room,
+          displayName: name || user.displayName || dom.displayName.value || "Participante",
+          role: role || "estudiante"
+        });
+      } else if (dom.app.classList.contains("hidden")) {
+        dom.lobby.classList.remove("hidden");
+      }
+    } else {
+      dom.authGate.classList.remove("hidden");
+      dom.lobby.classList.add("hidden");
+      dom.app.classList.add("hidden");
+    }
+  });
+}
+
+/* ===== Autenticación ===== */
+
+const AUTH_ERRORS = {
+  "auth/invalid-email": "El correo no es válido.",
+  "auth/user-not-found": "No existe una cuenta con ese correo. Usa «Crear cuenta nueva».",
+  "auth/wrong-password": "Contraseña incorrecta.",
+  "auth/invalid-credential": "Correo o contraseña incorrectos.",
+  "auth/email-already-in-use": "Ya existe una cuenta con ese correo. Inicia sesión.",
+  "auth/weak-password": "La contraseña debe tener al menos 6 caracteres.",
+  "auth/popup-closed-by-user": "Cerraste la ventana de Google antes de terminar.",
+  "auth/too-many-requests": "Demasiados intentos. Espera un momento y vuelve a intentar.",
+  "auth/operation-not-allowed": "Este método de acceso no está habilitado en Firebase (Authentication → Sign-in method)."
+};
+
+function authError(error) {
+  console.warn("Auth error", error);
+  toast(AUTH_ERRORS[error?.code] || "No se pudo iniciar sesión. Intenta de nuevo.");
+}
+
+function setupAuthEvents() {
+  dom.googleLogin.addEventListener("click", () => {
+    signInWithPopup(auth, new GoogleAuthProvider()).catch(authError);
+  });
+
+  dom.emailForm.addEventListener("submit", event => {
+    event.preventDefault();
+    signInWithEmailAndPassword(auth, dom.authEmail.value.trim(), dom.authPassword.value)
+      .catch(authError);
+  });
+
+  dom.registerBtn.addEventListener("click", () => {
+    const email = dom.authEmail.value.trim();
+    const password = dom.authPassword.value;
+    if (!email || password.length < 6) {
+      toast("Escribe tu correo y una contraseña de mínimo 6 caracteres.");
+      return;
+    }
+    createUserWithEmailAndPassword(auth, email, password)
+      .then(() => toast("Cuenta creada. ¡Bienvenido a Musicala! 🎵"))
+      .catch(authError);
+  });
+
+  dom.resetPassword.addEventListener("click", () => {
+    const email = dom.authEmail.value.trim();
+    if (!email) {
+      toast("Escribe tu correo arriba y vuelve a tocar aquí.");
+      return;
+    }
+    sendPasswordResetEmail(auth, email)
+      .then(() => toast("Te enviamos un correo para restablecer la contraseña."))
+      .catch(authError);
+  });
+
+  dom.logoutBtn.addEventListener("click", () => {
+    signOut(auth).then(() => toast("Sesión cerrada."));
+  });
 }
 
 function bindDom() {
@@ -111,9 +215,12 @@ function bindDom() {
     "launchScale", "bpm", "toggleMetronome", "beatIndicator", "workedOn", "progress",
     "homework", "saveLog", "exportLog", "clearLocal", "classLogList", "sendState",
     "stageArea", "stageNote", "btnStageNote", "btnStageSeq", "btnStageQuiz",
-    "btnStageCelebrate", "btnStageClear",
+    "btnStagePulse", "btnStageCelebrate", "btnStageClear",
     "videoArea", "remoteVideo", "remotePlaceholder", "localVideo",
-    "toggleMic", "toggleCam", "reconnectVideo"
+    "toggleMic", "toggleCam", "toggleMusicMode", "toggleStats", "statsPanel", "reconnectVideo",
+    "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
+    "registerBtn", "resetPassword", "logoutBtn", "userBadge",
+    "metroChip", "metroStateText", "beatIndicatorAula", "meter"
   ].forEach(id => dom[id] = document.getElementById(id));
 
   dom.tabs = Array.from(document.querySelectorAll(".tab"));
@@ -121,6 +228,8 @@ function bindDom() {
 }
 
 function setupEvents() {
+  setupAuthEvents();
+
   dom.joinForm.addEventListener("submit", event => {
     event.preventDefault();
     enterClass({
@@ -202,11 +311,19 @@ function setupEvents() {
   });
 
   dom.toggleMetronome.addEventListener("click", () => {
-    if (metronomeTimer) {
-      stopMetronome();
+    if (metro?.running) {
+      stopSharedMetronome();
     } else {
-      startMetronome();
+      startSharedMetronome();
     }
+  });
+
+  dom.bpm.addEventListener("change", () => {
+    if (metro?.running) startSharedMetronome(); // reinicia con el nuevo BPM
+  });
+
+  dom.meter.addEventListener("change", () => {
+    if (metro?.running) startSharedMetronome();
   });
 
   dom.quickResponses.forEach(button => {
@@ -272,6 +389,16 @@ function setupEvents() {
     toast("Juego lanzado. Espera la respuesta del estudiante.");
   });
 
+  dom.btnStagePulse.addEventListener("click", () => {
+    if (!metro?.running) startSharedMetronome();
+    launchStage({
+      kind: "pulse",
+      title: "Marca el pulso 🥁",
+      taps: 16
+    });
+    toast("Juego de pulso lanzado. El estudiante debe tocar al ritmo del metrónomo.");
+  });
+
   dom.btnStageCelebrate.addEventListener("click", () => {
     launchStage({ kind: "celebrate" });
     toast("🎉 Celebración enviada.");
@@ -291,6 +418,15 @@ function setupEvents() {
     localStream?.getVideoTracks().forEach(track => track.enabled = camOn);
     dom.toggleCam.classList.toggle("off", !camOn);
     dom.toggleCam.textContent = camOn ? "📷" : "🚫";
+  });
+
+  dom.toggleMusicMode.addEventListener("click", toggleMusicMode);
+
+  dom.toggleStats.addEventListener("click", () => {
+    const show = dom.statsPanel.classList.toggle("hidden") === false;
+    dom.toggleStats.classList.toggle("on", show);
+    if (show) startStats();
+    else stopStats();
   });
 
   dom.reconnectVideo.addEventListener("click", () => {
@@ -445,7 +581,8 @@ function publicState() {
     activeResource: appState.activeResource,
     activeExercise: appState.activeExercise,
     stage: appState.stage,
-    resources: appState.resources
+    resources: appState.resources,
+    metronome: metro
   };
 }
 
@@ -467,6 +604,9 @@ function mergeState(incoming) {
     }
     appState[key] = incoming[key];
   });
+
+  // Metrónomo compartido: aplicar siempre (null/ausente = apagado)
+  applyMetronome(incoming.metronome || null);
 
   if (!Array.isArray(appState.resources)) appState.resources = [];
   saveLocal();
@@ -496,7 +636,9 @@ function leaveClass() {
 
   if (presenceRef) remove(presenceRef).catch(() => {});
   hangUp();
-  stopMetronome();
+  stopMetroScheduler();
+  stopStats();
+  metro = null;
   location.href = location.pathname;
 }
 
@@ -767,6 +909,10 @@ function renderStage() {
     });
   }
 
+  if (stage.kind === "pulse") {
+    renderPulseStage(stage, isTeacher);
+  }
+
   if (stage.kind === "celebrate") {
     const pieces = Array.from({ length: 40 }, () => {
       const left = Math.random() * 100;
@@ -784,6 +930,99 @@ function renderStage() {
 
   const close = dom.stageArea.querySelector("[data-stage-close]");
   if (close) close.addEventListener("click", clearStage);
+}
+
+/* ===== Juego de pulso =====
+   El estudiante toca el botón en cada clic del metrónomo. Cada toque se
+   compara contra el pulso teórico usando el reloj del servidor y se publica
+   en RTDB, así el docente ve en vivo qué tan exacto va. */
+
+const PULSE_GOOD_MS = 70; // tolerancia para considerar el toque "en el pulso"
+
+function classifyTap(deltaMs) {
+  if (Math.abs(deltaMs) <= PULSE_GOOD_MS) return "good";
+  return deltaMs < 0 ? "early" : "late";
+}
+
+function renderPulseStage(stage, isTeacher) {
+  const closeButton = isTeacher
+    ? `<button class="stage-close ghost tiny" data-stage-close>✕ Cerrar</button>`
+    : "";
+  const total = stage.taps || 16;
+
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <p class="label">${escapeHtml(stage.title || "Marca el pulso")}</p>
+    ${isTeacher
+      ? `<p class="hint">El estudiante está tocando al ritmo del metrónomo. Verde = en el pulso, amarillo = adelantado, rosa = atrasado.</p>`
+      : `<button class="pulse-btn" data-pulse-tap>TOCA<br>al ritmo</button>`}
+    <p class="pulse-feedback" data-pulse-feedback></p>
+    <div class="pulse-taps" data-pulse-dots>
+      ${Array.from({ length: total }, () => `<span class="pulse-dot"></span>`).join("")}
+    </div>
+    <p class="hint" data-pulse-summary></p>
+  `;
+
+  const dots = Array.from(dom.stageArea.querySelectorAll(".pulse-dot"));
+  const feedback = dom.stageArea.querySelector("[data-pulse-feedback]");
+  const summary = dom.stageArea.querySelector("[data-pulse-summary]");
+  const taps = [];
+
+  const FEEDBACK_TEXT = {
+    good: "¡En el pulso! ✅",
+    early: "Un poco adelantado ⏪",
+    late: "Un poco atrasado ⏩"
+  };
+
+  const paintTap = tap => {
+    if (taps.length >= total) return;
+    taps.push(tap);
+    const dot = dots[taps.length - 1];
+    if (dot) dot.classList.add(tap.cls);
+    feedback.className = `pulse-feedback ${tap.cls}`;
+    feedback.textContent = `${FEEDBACK_TEXT[tap.cls]} (${tap.deltaMs > 0 ? "+" : ""}${Math.round(tap.deltaMs)} ms)`;
+
+    if (taps.length === total) {
+      const good = taps.filter(t => t.cls === "good").length;
+      const avg = Math.round(taps.reduce((sum, t) => sum + t.deltaMs, 0) / taps.length);
+      const text = `Resultado: ${good}/${total} en el pulso · desfase promedio ${avg > 0 ? "+" : ""}${avg} ms`;
+      summary.textContent = text;
+      if (!isTeacher) {
+        sendResponse(`🥁 ${text}`, { pulseStageId: stage.id });
+      }
+    }
+  };
+
+  // Ambos lados escuchan los toques publicados para este juego
+  if (pulseTapsUnsub) {
+    try { pulseTapsUnsub(); } catch {}
+  }
+  if (firebaseReady && roomPath) {
+    pulseTapsUnsub = onChildAdded(ref(db, `${roomPath}/pulseTaps/${stage.id}`), snap => {
+      const tap = snap.val();
+      if (tap) paintTap(tap);
+    });
+    unsubscribers.push(pulseTapsUnsub);
+  }
+
+  const tapButton = dom.stageArea.querySelector("[data-pulse-tap]");
+  if (tapButton) {
+    tapButton.addEventListener("pointerdown", () => {
+      ensureAudio();
+      const offset = beatOffset(serverNow());
+      if (!offset) {
+        feedback.className = "pulse-feedback late";
+        feedback.textContent = "El metrónomo está apagado: pídele al profe que lo encienda.";
+        return;
+      }
+      const tap = { deltaMs: Math.round(offset.deltaMs), cls: classifyTap(offset.deltaMs), at: new Date().toISOString() };
+      if (firebaseReady && roomPath) {
+        push(ref(db, `${roomPath}/pulseTaps/${stage.id}`), tap).catch(console.warn);
+      } else {
+        paintTap(tap);
+      }
+    });
+  }
 }
 
 function renderResources() {
@@ -920,38 +1159,243 @@ function renderLogs() {
   `).join("");
 }
 
-function startMetronome() {
+/* ===== Metrónomo sincronizado =====
+   El docente publica { bpm, meter, startAt } con hora del servidor.
+   Cada dispositivo agenda los clics localmente con Web Audio usando
+   el offset de reloj de Firebase (.info/serverTimeOffset), así ambos
+   lados escuchan el mismo pulso sin depender de la latencia de red. */
+
+function serverNow() {
+  return Date.now() + serverTimeOffset;
+}
+
+function ensureAudio() {
+  audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+  if (audioContext.state === "suspended") audioContext.resume().catch(() => {});
+  return audioContext;
+}
+
+function startSharedMetronome() {
   const bpm = Math.max(40, Math.min(240, Number(dom.bpm.value) || 80));
-  const interval = 60000 / bpm;
-  dom.toggleMetronome.textContent = "Detener";
-
-  tick();
-  metronomeTimer = setInterval(tick, interval);
+  const meter = Number(dom.meter.value) || 0;
+  const state = {
+    running: true,
+    bpm,
+    meter,
+    startAt: serverNow() + 400 // pequeño margen para que la señal llegue al otro lado
+  };
+  applyMetronome(state);
+  syncPatch({ metronome: state });
 }
 
-function stopMetronome() {
-  if (metronomeTimer) clearInterval(metronomeTimer);
-  metronomeTimer = null;
-  dom.toggleMetronome.textContent = "Iniciar";
-  dom.beatIndicator.classList.remove("on");
+function stopSharedMetronome() {
+  applyMetronome(null);
+  syncPatch({ metronome: null });
 }
 
-function tick() {
-  dom.beatIndicator.classList.add("on");
-  setTimeout(() => dom.beatIndicator.classList.remove("on"), 90);
+function applyMetronome(state) {
+  const changed = JSON.stringify(state) !== JSON.stringify(metro);
+  metro = state;
+  renderMetronomeUI();
+  if (!changed) return;
+
+  stopMetroScheduler();
+  if (metro?.running) startMetroScheduler();
+}
+
+function startMetroScheduler() {
+  const ctx = ensureAudio();
+  const intervalMs = 60000 / metro.bpm;
+
+  // Próximo pulso que aún no ha sonado
+  metroNextBeat = Math.max(0, Math.ceil((serverNow() - metro.startAt) / intervalMs));
+
+  const LOOKAHEAD_S = 0.15;
+
+  const schedule = () => {
+    if (!metro?.running) return;
+    const nowServer = serverNow();
+
+    while (true) {
+      const beatServerMs = metro.startAt + metroNextBeat * intervalMs;
+      const inSeconds = (beatServerMs - nowServer) / 1000;
+      if (inSeconds > LOOKAHEAD_S) break;
+
+      const when = ctx.currentTime + Math.max(0, inSeconds);
+      const accent = metro.meter > 1 && metroNextBeat % metro.meter === 0;
+      clickAt(ctx, when, accent);
+
+      const delayMs = Math.max(0, beatServerMs - nowServer);
+      setTimeout(() => flashBeat(accent), delayMs);
+
+      metroNextBeat++;
+    }
+  };
+
+  schedule();
+  metroSchedulerTimer = setInterval(schedule, 50);
+}
+
+function stopMetroScheduler() {
+  if (metroSchedulerTimer) clearInterval(metroSchedulerTimer);
+  metroSchedulerTimer = null;
+  dom.beatIndicator?.classList.remove("on");
+  dom.beatIndicatorAula?.classList.remove("on");
+}
+
+function clickAt(ctx, when, accent) {
+  try {
+    const oscillator = ctx.createOscillator();
+    const gain = ctx.createGain();
+    oscillator.frequency.value = accent ? 1320 : 880;
+    gain.gain.setValueAtTime(accent ? 0.09 : 0.05, when);
+    gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.05);
+    oscillator.connect(gain);
+    gain.connect(ctx.destination);
+    oscillator.start(when);
+    oscillator.stop(when + 0.06);
+  } catch {
+    // Si el navegador bloquea audio, el indicador visual igual sirve.
+  }
+}
+
+function flashBeat(accent) {
+  [dom.beatIndicator, dom.beatIndicatorAula].forEach(el => {
+    if (!el) return;
+    el.classList.add("on");
+    el.style.background = accent ? "var(--blue)" : "";
+    setTimeout(() => el.classList.remove("on"), 90);
+  });
+}
+
+function renderMetronomeUI() {
+  const running = !!metro?.running;
+  if (dom.toggleMetronome) dom.toggleMetronome.textContent = running ? "Detener" : "Iniciar";
+  if (running && dom.bpm && Number(dom.bpm.value) !== metro.bpm) dom.bpm.value = metro.bpm;
+
+  if (dom.metroChip) {
+    dom.metroChip.classList.toggle("hidden", !running);
+    dom.metroChip.classList.toggle("playing", running);
+    if (running) dom.metroChip.textContent = `♩ ${metro.bpm} BPM`;
+  }
+  if (dom.metroStateText) {
+    dom.metroStateText.textContent = running
+      ? `Sonando · ${metro.bpm} BPM${metro.meter > 1 ? ` · ${metro.meter}/4` : ""}`
+      : "Apagado";
+  }
+}
+
+// Distancia de un instante (hora servidor) al pulso más cercano del metrónomo.
+// Devuelve { deltaMs, beatIndex } — delta negativo = adelantado, positivo = atrasado.
+function beatOffset(tServerMs) {
+  if (!metro?.running) return null;
+  const intervalMs = 60000 / metro.bpm;
+  const beatIndex = Math.round((tServerMs - metro.startAt) / intervalMs);
+  return { deltaMs: tServerMs - (metro.startAt + beatIndex * intervalMs), beatIndex };
+}
+
+/* ===== Modo música y diagnóstico ===== */
+
+// Audio sin filtros de voz: el procesamiento (cancelación de eco, supresión
+// de ruido, control de ganancia) recorta el sonido de los instrumentos.
+async function toggleMusicMode() {
+  musicMode = !musicMode;
+  dom.toggleMusicMode.classList.toggle("on", musicMode);
 
   try {
-    audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gain = audioContext.createGain();
-    oscillator.frequency.value = 880;
-    gain.gain.value = 0.045;
-    oscillator.connect(gain);
-    gain.connect(audioContext.destination);
-    oscillator.start();
-    oscillator.stop(audioContext.currentTime + 0.045);
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      audio: musicMode
+        ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2 }
+        : { echoCancellation: true, noiseSuppression: true }
+    });
+    const newTrack = newStream.getAudioTracks()[0];
+    newTrack.enabled = micOn;
+
+    const oldTrack = localStream?.getAudioTracks()[0];
+    if (oldTrack && localStream) {
+      localStream.removeTrack(oldTrack);
+      oldTrack.stop();
+    }
+    localStream?.addTrack(newTrack);
+
+    const sender = peer?.getSenders().find(s => s.track?.kind === "audio");
+    if (sender) await sender.replaceTrack(newTrack);
+
+    toast(musicMode
+      ? "🎼 Modo música activado: audio sin filtros. Usa audífonos para evitar eco."
+      : "Modo voz activado: filtros de eco y ruido encendidos.");
   } catch (error) {
-    // Si el navegador bloquea audio, el indicador visual igual sirve.
+    console.error("No se pudo cambiar el modo de audio", error);
+    musicMode = !musicMode;
+    dom.toggleMusicMode.classList.toggle("on", musicMode);
+    toast("No se pudo cambiar el modo de audio.");
+  }
+}
+
+function startStats() {
+  stopStats();
+  statsTimer = setInterval(updateStats, 2000);
+  updateStats();
+}
+
+function stopStats() {
+  if (statsTimer) clearInterval(statsTimer);
+  statsTimer = null;
+}
+
+let lastBytes = { sent: 0, received: 0, at: 0 };
+
+async function updateStats() {
+  if (!peer) {
+    dom.statsPanel.innerHTML = "Sin conexión de video activa.";
+    return;
+  }
+
+  try {
+    const stats = await peer.getStats();
+    let rtt = null, jitter = null, packetsLost = 0, packetsReceived = 0;
+    let bytesSent = 0, bytesReceived = 0, audioLevel = null;
+
+    stats.forEach(report => {
+      if (report.type === "candidate-pair" && report.nominated && report.currentRoundTripTime != null) {
+        rtt = report.currentRoundTripTime * 1000;
+      }
+      if (report.type === "inbound-rtp") {
+        packetsLost += report.packetsLost || 0;
+        packetsReceived += report.packetsReceived || 0;
+        if (report.kind === "audio" && report.jitter != null) jitter = report.jitter * 1000;
+        bytesReceived += report.bytesReceived || 0;
+      }
+      if (report.type === "outbound-rtp") bytesSent += report.bytesSent || 0;
+      if (report.type === "media-source" && report.kind === "audio" && report.audioLevel != null) {
+        audioLevel = report.audioLevel;
+      }
+    });
+
+    const now = Date.now();
+    let upKbps = 0, downKbps = 0;
+    if (lastBytes.at) {
+      const seconds = (now - lastBytes.at) / 1000;
+      upKbps = Math.round((bytesSent - lastBytes.sent) * 8 / 1000 / seconds);
+      downKbps = Math.round((bytesReceived - lastBytes.received) * 8 / 1000 / seconds);
+    }
+    lastBytes = { sent: bytesSent, received: bytesReceived, at: now };
+
+    const lossPct = packetsReceived ? (packetsLost / (packetsLost + packetsReceived)) * 100 : 0;
+    const grade = (value, good, warn) =>
+      value == null ? "" : value <= good ? "ok" : value <= warn ? "warn" : "bad";
+
+    dom.statsPanel.innerHTML = `
+      <div><span class="${grade(rtt, 100, 250)}">Latencia (RTT): ${rtt == null ? "—" : Math.round(rtt) + " ms"}</span></div>
+      <div><span class="${grade(jitter, 15, 40)}">Jitter audio: ${jitter == null ? "—" : jitter.toFixed(1) + " ms"}</span></div>
+      <div><span class="${grade(lossPct, 1, 4)}">Paquetes perdidos: ${lossPct.toFixed(1)}%</span></div>
+      <div>Subida: ${upKbps} kbps · Bajada: ${downKbps} kbps</div>
+      <div>Mic nivel: ${audioLevel == null ? "—" : "▮".repeat(Math.max(1, Math.round(audioLevel * 12)))}</div>
+      <div>Modo audio: ${musicMode ? "🎼 música" : "🎙️ voz"}</div>
+      <div>Reloj vs servidor: ${Math.round(serverTimeOffset)} ms</div>
+    `;
+  } catch (error) {
+    console.warn("No se pudieron leer las estadísticas", error);
   }
 }
 
