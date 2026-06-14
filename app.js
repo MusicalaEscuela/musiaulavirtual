@@ -224,6 +224,8 @@ function bindDom() {
     "homework", "saveLog", "exportLog", "clearLocal", "classLogList", "sendState",
     "stageArea", "stageNote", "btnStageNote", "btnStageSeq", "btnStageQuiz",
     "btnStagePulse", "btnStageCelebrate", "btnStageClear",
+    "btnStagePiano", "btnStageGuitar", "btnStageViolin", "btnStageDrums",
+    "btnStageSimon", "btnStageEar", "btnStageMatch", "btnStageCountdown",
     "videoArea", "remoteVideo", "remotePlaceholder", "localVideo",
     "toggleMic", "toggleCam", "toggleMusicMode", "toggleStats", "statsPanel", "reconnectVideo",
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
@@ -237,6 +239,11 @@ function bindDom() {
 
 function setupEvents() {
   setupAuthEvents();
+
+  // El audio (altavoz remoto + metrónomo) necesita un gesto para arrancar en móvil.
+  const resumeAudio = () => ensureAudio();
+  document.addEventListener("pointerdown", resumeAudio);
+  document.addEventListener("touchstart", resumeAudio, { passive: true });
 
   dom.joinForm.addEventListener("submit", event => {
     event.preventDefault();
@@ -410,6 +417,47 @@ function setupEvents() {
   dom.btnStageCelebrate.addEventListener("click", () => {
     launchStage({ kind: "celebrate" });
     toast("🎉 Celebración enviada.");
+  });
+
+  dom.btnStagePiano.addEventListener("click", () => {
+    launchStage({ kind: "instrument", instrument: "piano", title: "Piano 🎹" });
+    toast("Piano en pantalla del estudiante. ¡Suena al tocarlo!");
+  });
+
+  dom.btnStageGuitar.addEventListener("click", () => {
+    launchStage({ kind: "instrument", instrument: "guitar", title: "Guitarra 🎸" });
+    toast("Diagrama de guitarra lanzado. Toca las cuerdas y trastes.");
+  });
+
+  dom.btnStageViolin.addEventListener("click", () => {
+    launchStage({ kind: "instrument", instrument: "violin", title: "Violín 🎻" });
+    toast("Diagrama de violín lanzado.");
+  });
+
+  dom.btnStageDrums.addEventListener("click", () => {
+    launchStage({ kind: "instrument", instrument: "drums", title: "Batería 🥁" });
+    toast("Batería en pantalla. ¡Toca los tambores!");
+  });
+
+  dom.btnStageSimon.addEventListener("click", () => {
+    launchStage({ kind: "simon", title: "Simón dice 🎵" });
+    toast("Juego de memoria lanzado. El estudiante repite la secuencia.");
+  });
+
+  dom.btnStageEar.addEventListener("click", () => {
+    const note = NOTES[Math.floor(Math.random() * NOTES.length)];
+    launchStage({ kind: "earQuiz", note, options: [...NOTES] });
+    toast("Juego de oído lanzado. El estudiante adivina la nota que suena.");
+  });
+
+  dom.btnStageMatch.addEventListener("click", () => {
+    launchStage({ kind: "match", title: "Pares musicales 🃏" });
+    toast("Juego de memoria de sonidos lanzado.");
+  });
+
+  dom.btnStageCountdown.addEventListener("click", () => {
+    launchStage({ kind: "countdown", from: 3 });
+    toast("Cuenta regresiva en pantalla de todos.");
   });
 
   dom.btnStageClear.addEventListener("click", () => clearStage());
@@ -680,9 +728,13 @@ function createPeer() {
   localStream?.getTracks().forEach(track => peer.addTrack(track, localStream));
 
   peer.ontrack = event => {
-    dom.remoteVideo.srcObject = event.streams[0];
+    const [stream] = event.streams;
+    dom.remoteVideo.srcObject = stream;
     remoteConnected = true;
     dom.remotePlaceholder.classList.add("hidden");
+    routeRemoteAudioToSpeaker(stream);
+    tuneAudioLatency();
+    boostAudioBitrate();
   };
 
   peer.onconnectionstatechange = () => {
@@ -734,6 +786,7 @@ async function startTeacherCall() {
   };
 
   const offer = await pc.createOffer();
+  offer.sdp = preferHiFiOpus(offer.sdp);
   await pc.setLocalDescription(offer);
   await set(ref(db, `${roomPath}/webrtc/offer`), {
     sessionId,
@@ -782,8 +835,10 @@ function listenForOffer() {
     try {
       await pc.setRemoteDescription(new RTCSessionDescription({ type: offer.type, sdp: offer.sdp }));
       const answer = await pc.createAnswer();
+      answer.sdp = preferHiFiOpus(answer.sdp);
       await pc.setLocalDescription(answer);
       await set(ref(db, `${roomPath}/webrtc/answer`), { type: answer.type, sdp: answer.sdp });
+      boostAudioBitrate();
     } catch (error) {
       console.error("No se pudo contestar la llamada", error);
       return;
@@ -798,6 +853,174 @@ function listenForOffer() {
       }
     });
   });
+}
+
+/* ===== Optimización de audio =====
+   Prioridad: sonido del instrumento perfecto, baja latencia y salida por altavoz. */
+
+let remoteAudioNode = null;
+
+// En móviles el audio de un <video> WebRTC suele enrutarse al AURICULAR.
+// Reproducirlo por Web Audio lo trata como "media" y lo manda al ALTAVOZ.
+function routeRemoteAudioToSpeaker(stream) {
+  if (!stream || !stream.getAudioTracks().length) return;
+  try {
+    const ctx = ensureAudio();
+    if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} }
+    remoteAudioNode = ctx.createMediaStreamSource(stream);
+    remoteAudioNode.connect(ctx.destination);
+    dom.remoteVideo.muted = true; // evita doble salida (Web Audio + elemento)
+  } catch (error) {
+    console.warn("No se pudo enrutar el audio al altavoz; uso el elemento de video", error);
+    dom.remoteVideo.muted = false;
+  }
+}
+
+// Reduce el búfer anti-jitter al mínimo: menos latencia para tocar en tiempo real.
+function tuneAudioLatency() {
+  if (!peer) return;
+  peer.getReceivers().forEach(receiver => {
+    if (receiver.track?.kind !== "audio") return;
+    try { receiver.jitterBufferTarget = 0; } catch {}
+    try { receiver.playoutDelayHint = 0; } catch {} // navegadores antiguos
+  });
+}
+
+// Sube el bitrate del audio que enviamos para que el instrumento llegue con detalle.
+async function boostAudioBitrate() {
+  const sender = peer?.getSenders().find(s => s.track?.kind === "audio");
+  if (!sender) return;
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxBitrate = 256000;
+    params.encodings[0].priority = "high";
+    await sender.setParameters(params);
+  } catch (error) {
+    console.warn("No se pudo subir el bitrate de audio", error);
+  }
+}
+
+// Munge de SDP: Opus estéreo, FEC, sin DTX ni recorte, 48 kHz a buen bitrate.
+function preferHiFiOpus(sdp) {
+  if (!sdp) return sdp;
+  const pt = (sdp.match(/a=rtpmap:(\d+)\s+opus\/48000/i) || [])[1];
+  if (!pt) return sdp;
+
+  const hifi = "stereo=1;sprop-stereo=1;maxaveragebitrate=256000;maxplaybackrate=48000;useinbandfec=1;usedtx=0;cbr=0";
+  const fmtpRe = new RegExp(`a=fmtp:${pt} (.*)`);
+
+  if (fmtpRe.test(sdp)) {
+    return sdp.replace(fmtpRe, (m, params) => `a=fmtp:${pt} ${mergeFmtp(params, hifi)}`);
+  }
+  return sdp.replace(
+    new RegExp(`(a=rtpmap:${pt} opus/48000(?:/2)?\r?\n)`),
+    `$1a=fmtp:${pt} ${hifi}\r\n`
+  );
+}
+
+// Combina parámetros fmtp existentes con los nuevos (los nuevos ganan en duplicados).
+function mergeFmtp(existing, extra) {
+  const map = new Map();
+  `${existing};${extra}`.split(";").forEach(pair => {
+    const t = pair.trim();
+    if (!t) return;
+    const [key, value] = t.split("=");
+    map.set(key.trim(), value);
+  });
+  return [...map.entries()].map(([k, v]) => (v == null ? k : `${k}=${v}`)).join(";");
+}
+
+/* ===== Síntesis de sonido (Web Audio, sin archivos de audio) ===== */
+
+const NOTE_MIDI = { Do: 60, Re: 62, Mi: 64, Fa: 65, Sol: 67, La: 69, Si: 71 };
+
+function midiToFreq(midi) {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+// Tono musical con un toque de armónico y envolvente suave (timbre tipo instrumento).
+function playTone(freq, { dur = 0.7, type = "triangle", gain = 0.16 } = {}) {
+  try {
+    const ctx = ensureAudio();
+    const t = ctx.currentTime;
+    const g = ctx.createGain();
+    const osc = ctx.createOscillator();
+    const harmonic = ctx.createOscillator();
+    osc.type = type;
+    harmonic.type = "sine";
+    osc.frequency.value = freq;
+    harmonic.frequency.value = freq * 2;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(gain, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(g);
+    harmonic.connect(g);
+    g.connect(ctx.destination);
+    osc.start(t); harmonic.start(t);
+    osc.stop(t + dur); harmonic.stop(t + dur);
+  } catch {
+    /* Si el navegador bloquea audio, los juegos siguen funcionando visualmente. */
+  }
+}
+
+function playMidi(midi, opts) { playTone(midiToFreq(midi), opts); }
+function playNote(name, opts) { playTone(midiToFreq(NOTE_MIDI[name] ?? 60), opts); }
+
+let _noiseBuffer = null;
+function noiseBuffer(ctx) {
+  if (_noiseBuffer) return _noiseBuffer;
+  const buffer = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  _noiseBuffer = buffer;
+  return buffer;
+}
+
+// Percusión sintetizada: bombo, redoblante, hi-hat, toms y platillo.
+function playDrum(kind) {
+  try {
+    const ctx = ensureAudio();
+    const t = ctx.currentTime;
+    const out = ctx.destination;
+
+    const tone = (f1, f2, dur, peak) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.frequency.setValueAtTime(f1, t);
+      osc.frequency.exponentialRampToValueAtTime(f2, t + dur);
+      g.gain.setValueAtTime(peak, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(g); g.connect(out);
+      osc.start(t); osc.stop(t + dur);
+    };
+    const noise = (type, freq, dur, peak) => {
+      const src = ctx.createBufferSource();
+      src.buffer = noiseBuffer(ctx);
+      const filter = ctx.createBiquadFilter();
+      filter.type = type; filter.frequency.value = freq;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(peak, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(filter); filter.connect(g); g.connect(out);
+      src.start(t); src.stop(t + dur);
+    };
+
+    if (kind === "kick") tone(150, 50, 0.3, 0.9);
+    else if (kind === "tom1") tone(220, 110, 0.25, 0.7);
+    else if (kind === "tom2") tone(160, 80, 0.28, 0.7);
+    else if (kind === "snare") { tone(180, 100, 0.12, 0.4); noise("highpass", 1500, 0.2, 0.6); }
+    else if (kind === "hat") noise("highpass", 8000, 0.05, 0.3);
+    else if (kind === "crash") noise("highpass", 5000, 0.8, 0.4);
+  } catch {
+    /* silencio si el navegador bloquea audio */
+  }
+}
+
+function flashEl(el) {
+  if (!el) return;
+  el.classList.add("lit");
+  setTimeout(() => el.classList.remove("lit"), 180);
 }
 
 /* ===== Render ===== */
@@ -842,6 +1065,7 @@ function renderStage() {
     clearInterval(stageTimer);
     stageTimer = null;
   }
+  clearGameTimers();
 
   const stage = appState.stage;
   if (!stage) {
@@ -920,6 +1144,12 @@ function renderStage() {
   if (stage.kind === "pulse") {
     renderPulseStage(stage, isTeacher);
   }
+
+  if (stage.kind === "instrument") renderInstrumentStage(stage, isTeacher, closeButton);
+  if (stage.kind === "simon") renderSimonStage(stage, isTeacher, closeButton);
+  if (stage.kind === "earQuiz") renderEarQuizStage(stage, isTeacher, closeButton);
+  if (stage.kind === "match") renderMatchStage(stage, isTeacher, closeButton);
+  if (stage.kind === "countdown") renderCountdownStage(stage, closeButton);
 
   if (stage.kind === "celebrate") {
     const pieces = Array.from({ length: 40 }, () => {
@@ -1031,6 +1261,291 @@ function renderPulseStage(stage, isTeacher) {
       }
     });
   }
+}
+
+/* ===== Instrumentos interactivos y juegos =====
+   Todos viven dentro del "escenario": el docente los lanza y el estudiante
+   los ve, los escucha y juega. El sonido se sintetiza en el navegador. */
+
+const PITCH_NAMES = ["Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si"];
+function noteNameFromMidi(midi) { return PITCH_NAMES[((midi % 12) + 12) % 12]; }
+
+let gameTimers = [];
+function gameTimeout(fn, ms) { const id = setTimeout(fn, ms); gameTimers.push(id); return id; }
+function clearGameTimers() { gameTimers.forEach(clearTimeout); gameTimers = []; }
+
+function renderInstrumentStage(stage, isTeacher, closeButton) {
+  if (stage.instrument === "piano") return renderPiano(stage, closeButton);
+  if (stage.instrument === "drums") return renderDrums(stage, closeButton);
+  return renderFretboard(stage, closeButton); // guitarra y violín
+}
+
+function renderPiano(stage, closeButton) {
+  const whites = [
+    { n: "Do", m: 60 }, { n: "Re", m: 62 }, { n: "Mi", m: 64 }, { n: "Fa", m: 65 },
+    { n: "Sol", m: 67 }, { n: "La", m: 69 }, { n: "Si", m: 71 }, { n: "Do", m: 72 }
+  ];
+  const blacks = { 0: 61, 1: 63, 3: 66, 4: 68, 5: 70 };
+
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <p class="label">${escapeHtml(stage.title || "Piano")}</p>
+    <p class="hint">Toca las teclas: suenan en este dispositivo. 🎹</p>
+    <div class="piano">
+      ${whites.map((w, i) => `
+        <div class="pkey-wrap">
+          <button class="pkey white" data-midi="${w.m}"><span>${w.n}</span></button>
+          ${blacks[i] != null ? `<button class="pkey black" data-midi="${blacks[i]}"></button>` : ""}
+        </div>
+      `).join("")}
+    </div>
+  `;
+  dom.stageArea.querySelectorAll(".pkey").forEach(key => {
+    key.addEventListener("pointerdown", () => {
+      playMidi(Number(key.dataset.midi));
+      flashEl(key);
+    });
+  });
+}
+
+function renderFretboard(stage, closeButton) {
+  const guitar = [
+    { name: "Mi", midi: 64 }, { name: "Si", midi: 59 }, { name: "Sol", midi: 55 },
+    { name: "Re", midi: 50 }, { name: "La", midi: 45 }, { name: "Mi", midi: 40 }
+  ];
+  const violin = [
+    { name: "Mi", midi: 76 }, { name: "La", midi: 69 }, { name: "Re", midi: 62 }, { name: "Sol", midi: 55 }
+  ];
+  const isViolin = stage.instrument === "violin";
+  const strings = isViolin ? violin : guitar;
+  const cols = 5; // trastes/posiciones 0..4
+  const colLabel = isViolin ? "Posición" : "Traste";
+
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <p class="label">${escapeHtml(stage.title || "Diagrama")}</p>
+    <p class="hint">Cada cuerda al aire (${colLabel.toLowerCase()} 0) y sus notas. Toca cualquier punto para escucharlo.</p>
+    <div class="fretboard ${isViolin ? "violin" : "guitar"}">
+      <div class="fret-head"><span></span>${Array.from({ length: cols }, (_, c) => `<span class="fret-num">${c}</span>`).join("")}</div>
+      ${strings.map(str => `
+        <div class="fret-row">
+          <span class="string-name">${str.name}</span>
+          ${Array.from({ length: cols }, (_, c) => {
+            const midi = str.midi + c;
+            return `<button class="fret-cell${c === 0 ? " open" : ""}" data-midi="${midi}">${noteNameFromMidi(midi)}</button>`;
+          }).join("")}
+        </div>
+      `).join("")}
+    </div>
+  `;
+  dom.stageArea.querySelectorAll(".fret-cell").forEach(cell => {
+    cell.addEventListener("pointerdown", () => {
+      playMidi(Number(cell.dataset.midi), { type: isViolin ? "sawtooth" : "triangle", dur: isViolin ? 1.1 : 0.8 });
+      flashEl(cell);
+    });
+  });
+}
+
+function renderDrums(stage, closeButton) {
+  const pads = [
+    { drum: "crash", label: "Crash", cls: "crash" },
+    { drum: "hat", label: "Hi-hat", cls: "hat" },
+    { drum: "snare", label: "Redoblante", cls: "snare" },
+    { drum: "tom1", label: "Tom 1", cls: "tom" },
+    { drum: "tom2", label: "Tom 2", cls: "tom" },
+    { drum: "kick", label: "Bombo", cls: "kick" }
+  ];
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <p class="label">${escapeHtml(stage.title || "Batería")}</p>
+    <p class="hint">Toca los tambores y platillos. 🥁</p>
+    <div class="drumkit">
+      ${pads.map(p => `<button class="drum-pad ${p.cls}" data-drum="${p.drum}">${p.label}</button>`).join("")}
+    </div>
+  `;
+  dom.stageArea.querySelectorAll(".drum-pad").forEach(pad => {
+    pad.addEventListener("pointerdown", () => {
+      playDrum(pad.dataset.drum);
+      flashEl(pad);
+    });
+  });
+}
+
+/* ===== Simón dice (memoria de secuencia) ===== */
+function renderSimonStage(stage, isTeacher, closeButton) {
+  const pads = [
+    { note: "Do", midi: 60, cls: "green" },
+    { note: "Mi", midi: 64, cls: "red" },
+    { note: "Sol", midi: 67, cls: "blue" },
+    { note: "Do8", midi: 72, cls: "yellow" }
+  ];
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <p class="label">${escapeHtml(stage.title || "Simón dice")}</p>
+    <p class="hint" data-simon-msg>Memoriza la secuencia y repítela. Cada ronda añade una nota.</p>
+    <div class="simon">
+      ${pads.map((p, i) => `<button class="simon-pad ${p.cls}" data-simon="${i}">${p.note}</button>`).join("")}
+    </div>
+    <button class="primary" data-simon-start>▶ Empezar</button>
+  `;
+
+  const padEls = Array.from(dom.stageArea.querySelectorAll(".simon-pad"));
+  const msg = dom.stageArea.querySelector("[data-simon-msg]");
+  const startBtn = dom.stageArea.querySelector("[data-simon-start]");
+  let sequence = [];
+  let input = [];
+  let accepting = false;
+
+  const blink = i => { playMidi(pads[i].midi, { dur: 0.4 }); flashEl(padEls[i]); };
+
+  const playSequence = () => {
+    accepting = false;
+    sequence.forEach((idx, n) => gameTimeout(() => blink(idx), 600 * (n + 1)));
+    gameTimeout(() => { accepting = true; msg.textContent = "¡Tu turno! Repite la secuencia."; }, 600 * (sequence.length + 1));
+  };
+
+  const nextRound = () => {
+    input = [];
+    sequence.push(Math.floor(Math.random() * pads.length));
+    msg.textContent = `Ronda ${sequence.length}. Observa...`;
+    gameTimeout(playSequence, 500);
+  };
+
+  padEls.forEach((pad, i) => {
+    pad.addEventListener("pointerdown", () => {
+      if (!accepting) return;
+      blink(i);
+      input.push(i);
+      const pos = input.length - 1;
+      if (input[pos] !== sequence[pos]) {
+        accepting = false;
+        msg.textContent = `¡Casi! Llegaste a la ronda ${sequence.length - 1}. Toca Empezar para reintentar.`;
+        if (!isTeacher) sendResponse(`🎵 Simón dice: llegó a la ronda ${sequence.length - 1}`, { simon: true });
+        sequence = [];
+        return;
+      }
+      if (input.length === sequence.length) {
+        accepting = false;
+        msg.textContent = "¡Bien! Siguiente ronda...";
+        gameTimeout(nextRound, 900);
+      }
+    });
+  });
+
+  startBtn.addEventListener("click", () => {
+    clearGameTimers();
+    sequence = [];
+    nextRound();
+  });
+}
+
+/* ===== Adivina la nota (entrenamiento auditivo) ===== */
+function renderEarQuizStage(stage, isTeacher, closeButton) {
+  const answered = answeredQuizIds.has(stage.id);
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <p class="label">Adivina la nota 👂</p>
+    <h2 class="stage-question">¿Qué nota suena?</h2>
+    <button class="primary" data-ear-play>🔊 Escuchar</button>
+    <div class="stage-options">
+      ${(stage.options || []).map(n => `<button class="quiz-option" data-ear-answer="${escapeHtml(n)}" ${answered ? "disabled" : ""}>${escapeHtml(n)}</button>`).join("")}
+    </div>
+    <p class="hint stage-hint">${isTeacher ? `Vista previa · la nota correcta es ${escapeHtml(stage.note)}.` : "Escucha y elige la nota correcta."}</p>
+  `;
+
+  dom.stageArea.querySelector("[data-ear-play]").addEventListener("click", () => playNote(stage.note, { dur: 1 }));
+
+  dom.stageArea.querySelectorAll("[data-ear-answer]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const answer = btn.dataset.earAnswer;
+      const correct = answer === stage.note;
+      answeredQuizIds.add(stage.id);
+      dom.stageArea.querySelectorAll("[data-ear-answer]").forEach(b => {
+        b.disabled = true;
+        if (b.dataset.earAnswer === stage.note) b.classList.add("correct");
+      });
+      btn.classList.add(correct ? "correct" : "wrong");
+      const hint = dom.stageArea.querySelector(".stage-hint");
+      if (hint) hint.textContent = correct ? "¡Correcto! 🎉" : `Era ${stage.note}.`;
+      playNote(stage.note, { dur: 0.8 });
+      if (!isTeacher) sendResponse(`${correct ? "✅" : "❌"} Adivina la nota: respondió "${answer}" (era ${stage.note})`, { earId: stage.id });
+    });
+  });
+}
+
+/* ===== Pares musicales (memoria de sonidos) ===== */
+function renderMatchStage(stage, isTeacher, closeButton) {
+  const base = ["Do", "Re", "Mi", "Sol"];
+  if (!stage.deck) {
+    stage.deck = [...base, ...base]
+      .map(note => ({ note, key: cryptoId() }))
+      .sort(() => Math.random() - 0.5);
+  }
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <p class="label">${escapeHtml(stage.title || "Pares musicales")}</p>
+    <p class="hint" data-match-msg>Encuentra las parejas de notas que suenan igual.</p>
+    <div class="match-grid">
+      ${stage.deck.map((card, i) => `<button class="match-card" data-match="${i}" data-note="${card.note}"><span class="match-face">?</span></button>`).join("")}
+    </div>
+  `;
+
+  const cards = Array.from(dom.stageArea.querySelectorAll(".match-card"));
+  const msg = dom.stageArea.querySelector("[data-match-msg]");
+  let first = null;
+  let lock = false;
+  let matched = 0;
+
+  cards.forEach(card => {
+    card.addEventListener("click", () => {
+      if (lock || card.classList.contains("revealed") || card.classList.contains("done")) return;
+      card.classList.add("revealed");
+      card.querySelector(".match-face").textContent = card.dataset.note;
+      playNote(card.dataset.note, { dur: 0.6 });
+
+      if (!first) { first = card; return; }
+
+      if (first.dataset.note === card.dataset.note && first !== card) {
+        first.classList.add("done"); card.classList.add("done");
+        matched += 2; first = null;
+        if (matched === cards.length) {
+          msg.textContent = "¡Todas las parejas! 🎉";
+          if (!isTeacher) sendResponse("🃏 Pares musicales: ¡completó el juego!", { matchId: stage.id });
+        }
+      } else {
+        lock = true;
+        const a = first, b = card; first = null;
+        gameTimeout(() => {
+          [a, b].forEach(c => { c.classList.remove("revealed"); c.querySelector(".match-face").textContent = "?"; });
+          lock = false;
+        }, 800);
+      }
+    });
+  });
+}
+
+/* ===== Cuenta regresiva (capta la atención antes de empezar) ===== */
+function renderCountdownStage(stage, closeButton) {
+  let n = stage.from || 3;
+  dom.stageArea.innerHTML = `${closeButton}<div class="countdown" data-count>${n}</div>`;
+  const el = dom.stageArea.querySelector("[data-count]");
+  playMidi(72, { dur: 0.25 });
+  stageTimer = setInterval(() => {
+    n--;
+    if (n > 0) {
+      el.textContent = n;
+      el.classList.remove("go");
+      void el.offsetWidth; // reinicia la animación
+      el.classList.add("pop");
+      playMidi(72, { dur: 0.25 });
+    } else {
+      el.textContent = "¡Ya! 🎉";
+      el.classList.add("go");
+      playMidi(84, { dur: 0.6 });
+      clearInterval(stageTimer);
+      stageTimer = null;
+    }
+  }, 1000);
 }
 
 function renderResources() {
@@ -1313,7 +1828,7 @@ async function toggleMusicMode() {
   try {
     const newStream = await navigator.mediaDevices.getUserMedia({
       audio: musicMode
-        ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2 }
+        ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000 }
         : { echoCancellation: true, noiseSuppression: true }
     });
     const newTrack = newStream.getAudioTracks()[0];
