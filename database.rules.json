@@ -1,0 +1,37 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "rooms": {
+      "$room": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+
+        "participants": {
+          "$participantId": {
+            ".validate": "newData.hasChildren(['name', 'role']) && newData.child('name').isString() && newData.child('role').isString()"
+          }
+        },
+
+        "live": {
+          ".validate": true
+        },
+
+        "responses": {
+          "$responseId": {
+            ".validate": "newData.hasChild('text')"
+          }
+        },
+
+        "webrtc": {
+          ".validate": true
+        },
+
+        "pulseTaps": {
+          ".validate": true
+        }
+      }
+    }
+  }
+}

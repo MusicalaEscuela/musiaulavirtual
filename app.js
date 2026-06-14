@@ -5,7 +5,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js";
 import {
   getAuth, onAuthStateChanged, signOut,
-  GoogleAuthProvider, signInWithPopup,
+  GoogleAuthProvider, signInWithPopup, signInAnonymously,
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { firebaseConfig } from "./firebase-config.js";
@@ -132,12 +132,20 @@ function init() {
         pendingAutoJoin = null;
         enterClass({
           room,
-          displayName: name || user.displayName || dom.displayName.value || "Participante",
+          displayName: name || user.displayName || dom.displayName.value || "Estudiante",
           role: role || "estudiante"
         });
       } else if (dom.app.classList.contains("hidden")) {
         dom.lobby.classList.remove("hidden");
       }
+    } else if (pendingAutoJoin) {
+      // Invitado por enlace: entra sin login con sesión anónima y se conecta de una.
+      dom.authGate.classList.add("hidden");
+      signInAnonymously(auth).catch(error => {
+        console.error("No se pudo iniciar sesión anónima", error);
+        dom.authGate.classList.remove("hidden");
+        toast("Habilita el acceso anónimo en Firebase (Authentication → Sign-in method → Anónimo).");
+      });
     } else {
       dom.authGate.classList.remove("hidden");
       dom.lobby.classList.add("hidden");
@@ -244,8 +252,8 @@ function setupEvents() {
     toast("Sala aleatoria creada. Copia el enlace para el otro dispositivo.");
   });
 
-  dom.copyLobbyLink.addEventListener("click", () => copyLink(false));
-  dom.copyClassLink.addEventListener("click", () => copyLink(true));
+  dom.copyLobbyLink.addEventListener("click", () => copyLink());
+  dom.copyClassLink.addEventListener("click", () => copyLink());
 
   dom.leaveClass.addEventListener("click", leaveClass);
 
@@ -1462,13 +1470,23 @@ function activateTab(tabId) {
   });
 }
 
-function copyLink(includeClassState) {
-  const link = buildClassUrl(includeClassState);
+function copyLink() {
+  const link = buildInviteUrl();
   navigator.clipboard?.writeText(link).then(() => {
-    toast("Enlace copiado. Pégalo en el segundo dispositivo.");
+    toast("Enlace de estudiante copiado. Envíalo al otro dispositivo.");
   }).catch(() => {
     window.prompt("Copia este enlace:", link);
   });
+}
+
+// Enlace de invitación: el destinatario entra siempre como ESTUDIANTE.
+// No lleva el nombre del docente; el invitado se conecta de una con sesión anónima.
+function buildInviteUrl() {
+  const url = new URL(location.href);
+  url.searchParams.set("room", normalizeRoom(dom.roomName.value || appState.room || makeRoomName()));
+  url.searchParams.set("role", "estudiante");
+  url.searchParams.delete("name");
+  return url.toString();
 }
 
 function buildClassUrl(includeName) {
