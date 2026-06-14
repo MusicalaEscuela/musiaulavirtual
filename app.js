@@ -67,6 +67,11 @@ let metroSchedulerTimer = null;
 let metroNextBeat = 0;       // índice del próximo pulso a agendar
 let pulseTapsUnsub = null;
 
+// Identificador único de este dispositivo para ignorar mis propios eventos
+// al transmitir lo que toco en los instrumentos.
+const CLIENT_ID = cryptoId();
+let instrumentPlaySince = 0;
+
 let appState = {
   room: "",
   displayName: "",
@@ -589,6 +594,14 @@ async function connectRoom() {
     }
   });
 
+  // Instrumentos en vivo: lo que un lado toca, el otro lo ve y lo escucha.
+  instrumentPlaySince = Date.now();
+  listen(query(ref(db, `${roomPath}/instrumentPlay`), limitToLast(20)), null, snap => {
+    const ev = snap.val();
+    if (!ev || ev.by === CLIENT_ID || (ev.at || 0) < instrumentPlaySince) return;
+    applyRemotePlay(ev);
+  });
+
   setStatus("En sala", true);
   startVideo();
 }
@@ -1023,6 +1036,34 @@ function flashEl(el) {
   setTimeout(() => el.classList.remove("lit"), 180);
 }
 
+// Transmite a la sala que toqué algo (tecla, traste o tambor).
+function emitPlay(playId, sound) {
+  if (!firebaseReady || !roomPath) return;
+  push(ref(db, `${roomPath}/instrumentPlay`), {
+    playId, sound, by: CLIENT_ID, at: Date.now()
+  }).catch(() => {});
+}
+
+// Reproduce y resalta lo que tocó el OTRO participante.
+function applyRemotePlay(ev) {
+  if (ev.sound?.drum) playDrum(ev.sound.drum);
+  else if (ev.sound?.midi != null) playMidi(ev.sound.midi, ev.sound.opts);
+
+  // Si tengo el mismo instrumento en pantalla, ilumino el punto que tocó.
+  if (ev.playId && dom.stageArea) {
+    const el = dom.stageArea.querySelector(`[data-play-id="${ev.playId}"]`);
+    if (el) flashEl(el);
+  }
+}
+
+// Toca local + transmite a la sala en un solo paso.
+function playAndEmit(playId, sound, el) {
+  if (sound.drum) playDrum(sound.drum);
+  else playMidi(sound.midi, sound.opts);
+  flashEl(el);
+  emitPlay(playId, sound);
+}
+
 /* ===== Render ===== */
 
 function renderAll() {
@@ -1294,16 +1335,15 @@ function renderPiano(stage, closeButton) {
     <div class="piano">
       ${whites.map((w, i) => `
         <div class="pkey-wrap">
-          <button class="pkey white" data-midi="${w.m}"><span>${w.n}</span></button>
-          ${blacks[i] != null ? `<button class="pkey black" data-midi="${blacks[i]}"></button>` : ""}
+          <button class="pkey white" data-midi="${w.m}" data-play-id="p${w.m}"><span>${w.n}</span></button>
+          ${blacks[i] != null ? `<button class="pkey black" data-midi="${blacks[i]}" data-play-id="p${blacks[i]}"></button>` : ""}
         </div>
       `).join("")}
     </div>
   `;
   dom.stageArea.querySelectorAll(".pkey").forEach(key => {
     key.addEventListener("pointerdown", () => {
-      playMidi(Number(key.dataset.midi));
-      flashEl(key);
+      playAndEmit(key.dataset.playId, { midi: Number(key.dataset.midi) }, key);
     });
   });
 }
@@ -1327,21 +1367,21 @@ function renderFretboard(stage, closeButton) {
     <p class="hint">Cada cuerda al aire (${colLabel.toLowerCase()} 0) y sus notas. Toca cualquier punto para escucharlo.</p>
     <div class="fretboard ${isViolin ? "violin" : "guitar"}">
       <div class="fret-head"><span></span>${Array.from({ length: cols }, (_, c) => `<span class="fret-num">${c}</span>`).join("")}</div>
-      ${strings.map(str => `
+      ${strings.map((str, si) => `
         <div class="fret-row">
           <span class="string-name">${str.name}</span>
           ${Array.from({ length: cols }, (_, c) => {
             const midi = str.midi + c;
-            return `<button class="fret-cell${c === 0 ? " open" : ""}" data-midi="${midi}">${noteNameFromMidi(midi)}</button>`;
+            return `<button class="fret-cell${c === 0 ? " open" : ""}" data-midi="${midi}" data-play-id="f${si}-${c}">${noteNameFromMidi(midi)}</button>`;
           }).join("")}
         </div>
       `).join("")}
     </div>
   `;
+  const opts = { type: isViolin ? "sawtooth" : "triangle", dur: isViolin ? 1.1 : 0.8 };
   dom.stageArea.querySelectorAll(".fret-cell").forEach(cell => {
     cell.addEventListener("pointerdown", () => {
-      playMidi(Number(cell.dataset.midi), { type: isViolin ? "sawtooth" : "triangle", dur: isViolin ? 1.1 : 0.8 });
-      flashEl(cell);
+      playAndEmit(cell.dataset.playId, { midi: Number(cell.dataset.midi), opts }, cell);
     });
   });
 }
@@ -1360,13 +1400,12 @@ function renderDrums(stage, closeButton) {
     <p class="label">${escapeHtml(stage.title || "Batería")}</p>
     <p class="hint">Toca los tambores y platillos. 🥁</p>
     <div class="drumkit">
-      ${pads.map(p => `<button class="drum-pad ${p.cls}" data-drum="${p.drum}">${p.label}</button>`).join("")}
+      ${pads.map(p => `<button class="drum-pad ${p.cls}" data-drum="${p.drum}" data-play-id="d${p.drum}">${p.label}</button>`).join("")}
     </div>
   `;
   dom.stageArea.querySelectorAll(".drum-pad").forEach(pad => {
     pad.addEventListener("pointerdown", () => {
-      playDrum(pad.dataset.drum);
-      flashEl(pad);
+      playAndEmit(pad.dataset.playId, { drum: pad.dataset.drum }, pad);
     });
   });
 }
