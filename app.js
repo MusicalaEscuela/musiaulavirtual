@@ -9,6 +9,7 @@ import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { firebaseConfig } from "./firebase-config.js";
+import { loadBiblioteca } from "./biblioteca.js";
 
 const NOTES = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si"];
 const STORAGE_KEY = "musiaula_prototipo_v2";
@@ -50,6 +51,7 @@ let pendingAutoJoin = null;
 
 let peer = null;
 let localStream = null;
+let screenStream = null;
 let remoteConnected = false;
 let micOn = true;
 let camOn = true;
@@ -71,6 +73,12 @@ let pulseTapsUnsub = null;
 // al transmitir lo que toco en los instrumentos.
 const CLIENT_ID = cryptoId();
 let instrumentPlaySince = 0;
+
+// Biblioteca Musicala (solo lado docente; se carga al abrir la pestaña Recursos)
+let biblioItems = [];
+let biblioLoading = false;
+let biblioLoaded = false;
+let biblioVisible = 30; // cuántos resultados filtrados se muestran
 
 let appState = {
   room: "",
@@ -233,6 +241,8 @@ function bindDom() {
     "btnStageSimon", "btnStageEar", "btnStageMatch", "btnStageCountdown",
     "videoArea", "remoteVideo", "remotePlaceholder", "localVideo",
     "toggleMic", "toggleCam", "toggleMusicMode", "toggleStats", "statsPanel", "reconnectVideo",
+    "shareScreen", "biblioRefresh", "biblioStatus", "biblioSearch", "biblioArea",
+    "biblioCategoria", "biblioNivel", "biblioList", "biblioMore",
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
     "registerBtn", "resetPassword", "logoutBtn", "userBadge",
     "metroChip", "metroStateText", "beatIndicatorAula", "meter"
@@ -493,6 +503,18 @@ function setupEvents() {
   dom.reconnectVideo.addEventListener("click", () => {
     toast("Reiniciando conexión de video...");
     startTeacherCall();
+  });
+
+  dom.shareScreen.addEventListener("click", toggleScreenShare);
+
+  dom.biblioRefresh.addEventListener("click", () => initBiblioteca({ force: true }));
+  dom.biblioSearch.addEventListener("input", () => { biblioVisible = 30; renderBiblioteca(); });
+  [dom.biblioArea, dom.biblioCategoria, dom.biblioNivel].forEach(select => {
+    select.addEventListener("change", () => { biblioVisible = 30; renderBiblioteca(); });
+  });
+  dom.biblioMore.addEventListener("click", () => {
+    biblioVisible += 30;
+    renderBiblioteca();
   });
 }
 
@@ -774,6 +796,7 @@ function closePeer() {
 }
 
 function hangUp() {
+  stopScreenShare(true);
   closePeer();
   localStream?.getTracks().forEach(track => track.stop());
   localStream = null;
@@ -782,9 +805,74 @@ function hangUp() {
   }
 }
 
+/* ===== Compartir pantalla =====
+   Reemplaza el track de la cámara por el de la pantalla en la conexión que ya
+   existe (replaceTrack), sin renegociar la llamada. Al terminar vuelve a la
+   cámara. La cámara sigue viva mientras tanto para poder volver a ella. */
+
+async function toggleScreenShare() {
+  if (screenStream) {
+    stopScreenShare();
+    return;
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 } },
+      audio: false
+    });
+  } catch {
+    // El docente canceló el selector o el navegador no lo permite.
+    return;
+  }
+
+  screenStream = stream;
+  const screenTrack = stream.getVideoTracks()[0];
+
+  const sender = peer?.getSenders().find(s => s.track?.kind === "video");
+  if (sender) {
+    try {
+      await sender.replaceTrack(screenTrack);
+    } catch (error) {
+      console.warn("No se pudo enviar la pantalla", error);
+    }
+  }
+
+  dom.localVideo.srcObject = screenStream;
+  dom.shareScreen.classList.add("on");
+  dom.shareScreen.textContent = "⏹";
+  // El navegador tiene su propio botón "Dejar de compartir": lo escuchamos.
+  screenTrack.onended = () => stopScreenShare();
+  toast(sender
+    ? "Compartiendo pantalla con el estudiante."
+    : "Compartiendo pantalla. Se enviará cuando el estudiante se conecte de nuevo.");
+}
+
+function stopScreenShare(silent = false) {
+  if (!screenStream) return;
+  screenStream.getTracks().forEach(track => track.stop());
+  screenStream = null;
+
+  const cameraTrack = localStream?.getVideoTracks()[0];
+  const sender = peer?.getSenders().find(s => s.track?.kind === "video");
+  if (sender && cameraTrack) {
+    sender.replaceTrack(cameraTrack).catch(console.warn);
+  }
+
+  if (dom.localVideo) dom.localVideo.srcObject = localStream;
+  dom.shareScreen?.classList.remove("on");
+  if (dom.shareScreen) dom.shareScreen.textContent = "🖥️";
+  if (!silent) toast("Dejaste de compartir pantalla. Cámara de vuelta.");
+}
+
 // Docente = quien llama: publica oferta y espera respuesta.
 async function startTeacherCall() {
   if (!localStream || !firebaseReady || !roomPath) return;
+
+  // La conexión nueva arranca con la cámara; si se estaba compartiendo
+  // pantalla, se corta para no dejar un estado a medias.
+  stopScreenShare(true);
 
   const rtcRef = ref(db, `${roomPath}/webrtc`);
   await remove(rtcRef).catch(() => {});
@@ -1080,8 +1168,12 @@ function renderAula() {
   dom.objectiveView.textContent = appState.objective || "Sin objetivo publicado todavía";
 
   if (appState.activeResource) {
-    dom.activeResourceTitle.textContent = appState.activeResource.title;
-    dom.activeResourceDesc.textContent = appState.activeResource.desc || "Sin descripción.";
+    const resource = appState.activeResource;
+    const url = safeUrl(resource.url);
+    dom.activeResourceTitle.textContent = resource.title;
+    dom.activeResourceDesc.innerHTML =
+      escapeHtml(resource.desc || "Sin descripción.") +
+      (url ? `<br><a class="resource-open" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Abrir recurso ↗</a>` : "");
   } else {
     dom.activeResourceTitle.textContent = "Ninguno";
     dom.activeResourceDesc.textContent = "Activa un recurso desde la pestaña Recursos.";
@@ -1185,6 +1277,8 @@ function renderStage() {
   if (stage.kind === "pulse") {
     renderPulseStage(stage, isTeacher);
   }
+
+  if (stage.kind === "resource") renderResourceStage(stage, isTeacher, closeButton);
 
   if (stage.kind === "instrument") renderInstrumentStage(stage, isTeacher, closeButton);
   if (stage.kind === "simon") renderSimonStage(stage, isTeacher, closeButton);
@@ -1593,16 +1687,29 @@ function renderResources() {
     return;
   }
 
-  dom.resourceList.innerHTML = appState.resources.map(resource => `
+  dom.resourceList.innerHTML = appState.resources.map(resource => {
+    const url = safeUrl((String(resource.desc || "").match(/https?:\/\/[^\s]+/) || [])[0]);
+    return `
     <article class="resource-card">
       <h3>${escapeHtml(resource.title)}</h3>
       <p>${linkify(escapeHtml(resource.desc || "Sin descripción."))}</p>
       <div class="actions wrap">
         <button class="primary tiny" data-activate-resource="${resource.id}">Activar</button>
+        ${url ? `<button class="secondary tiny" data-project-resource="${resource.id}">▶ Proyectar</button>` : ""}
         <button class="ghost tiny" data-delete-resource="${resource.id}">Eliminar</button>
       </div>
     </article>
-  `).join("");
+  `;
+  }).join("");
+
+  dom.resourceList.querySelectorAll("[data-project-resource]").forEach(button => {
+    button.addEventListener("click", () => {
+      const resource = appState.resources.find(item => item.id === button.dataset.projectResource);
+      const url = (String(resource?.desc || "").match(/https?:\/\/[^\s]+/) || [])[0];
+      if (!resource || !url) return;
+      projectResource(resource.title, url);
+    });
+  });
 
   dom.resourceList.querySelectorAll("[data-activate-resource]").forEach(button => {
     button.addEventListener("click", () => {
@@ -1628,6 +1735,241 @@ function renderResources() {
       syncPatch({ resources: appState.resources, activeResource: appState.activeResource });
     });
   });
+}
+
+/* ===== Biblioteca Musicala =====
+   Lee los recursos publicados de la biblioteca central (Firestore, solo
+   lectura) para que el docente los busque, los proyecte en el escenario o
+   se los envíe al estudiante como recurso activo. */
+
+async function initBiblioteca({ force = false } = {}) {
+  if (biblioLoading) return;
+  biblioLoading = true;
+  dom.biblioStatus.textContent = force
+    ? "Actualizando la biblioteca..."
+    : "Abriendo la biblioteca...";
+
+  try {
+    const { items, fromCache, at } = await loadBiblioteca({ force });
+    biblioItems = items;
+    biblioLoaded = true;
+    biblioVisible = 30;
+    buildBiblioFilters();
+    renderBiblioteca();
+    const when = formatDate(new Date(at).toISOString());
+    dom.biblioStatus.textContent = `${items.length} recursos disponibles · ${fromCache ? "guardados el" : "actualizados el"} ${when}`;
+  } catch (error) {
+    console.error("No se pudo cargar la biblioteca", error);
+    dom.biblioStatus.textContent = "No se pudo cargar la biblioteca. Revisa tu conexión y toca «Actualizar».";
+  } finally {
+    biblioLoading = false;
+  }
+}
+
+// Llena los selectores de filtro con los valores que realmente existen.
+function buildBiblioFilters() {
+  const fill = (select, values, emptyLabel) => {
+    const current = select.value;
+    const options = [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b, "es"));
+    select.innerHTML = `<option value="">${emptyLabel}</option>` +
+      options.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+    if (options.includes(current)) select.value = current;
+  };
+
+  fill(dom.biblioArea, biblioItems.map(item => item.especialidad || item.area), "Todas las áreas");
+  fill(dom.biblioCategoria, biblioItems.map(item => item.categoria), "Todas las categorías");
+  fill(dom.biblioNivel, biblioItems.map(item => item.nivel), "Todos los niveles");
+}
+
+function normalizeText(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+}
+
+function filterBiblioteca() {
+  const text = normalizeText(dom.biblioSearch.value.trim());
+  const area = dom.biblioArea.value;
+  const categoria = dom.biblioCategoria.value;
+  const nivel = dom.biblioNivel.value;
+
+  return biblioItems.filter(item => {
+    if (area && (item.especialidad || item.area) !== area) return false;
+    if (categoria && item.categoria !== categoria) return false;
+    if (nivel && item.nivel !== nivel) return false;
+    if (!text) return true;
+    const haystack = normalizeText(
+      [item.titulo, item.descripcion, item.tema, item.area, item.especialidad, ...(item.etiquetas || [])].join(" ")
+    );
+    return text.split(/\s+/).every(word => haystack.includes(word));
+  });
+}
+
+function renderBiblioteca() {
+  if (!biblioLoaded) return;
+
+  const matches = filterBiblioteca();
+  const shown = matches.slice(0, biblioVisible);
+
+  if (!matches.length) {
+    dom.biblioList.innerHTML = `<div class="log-list empty">Nada por aquí. Prueba con otra palabra o quita filtros.</div>`;
+  } else {
+    dom.biblioList.innerHTML = shown.map(item => {
+      const chips = [item.especialidad || item.area, item.categoria || item.tema, item.nivel]
+        .filter(Boolean)
+        .map(chip => `<span class="biblio-chip">${escapeHtml(chip)}</span>`)
+        .join("");
+
+      const links = item.enlaces
+        .map((enlace, index) => ({ enlace, index }))
+        .filter(({ enlace }) => safeUrl(enlace.url))
+        .map(({ enlace, index }) => `
+          <div class="biblio-link">
+            <span class="biblio-link-name" title="${escapeHtml(enlace.url)}">${escapeHtml(enlace.titulo || linkHost(enlace.url))}</span>
+            <button class="primary tiny" data-biblio-project="${escapeHtml(item.id)}" data-link-index="${index}">▶ Proyectar</button>
+          </div>
+        `).join("");
+
+      return `
+        <article class="resource-card biblio-card">
+          <h3>${escapeHtml(item.titulo)}</h3>
+          ${chips ? `<p class="biblio-meta">${chips}</p>` : ""}
+          ${item.descripcion ? `<p>${escapeHtml(shorten(item.descripcion, 180))}</p>` : ""}
+          ${links}
+          <div class="actions wrap">
+            <button class="secondary tiny" data-biblio-send="${escapeHtml(item.id)}">Enviar al estudiante</button>
+          </div>
+        </article>
+      `;
+    }).join("");
+  }
+
+  dom.biblioMore.classList.toggle("hidden", matches.length <= biblioVisible);
+  if (biblioLoaded && biblioItems.length) {
+    dom.biblioStatus.textContent = `${matches.length} de ${biblioItems.length} recursos`;
+  }
+
+  dom.biblioList.querySelectorAll("[data-biblio-project]").forEach(button => {
+    button.addEventListener("click", () => {
+      const item = biblioItems.find(i => i.id === button.dataset.biblioProject);
+      const enlace = item?.enlaces[Number(button.dataset.linkIndex)];
+      if (!item || !enlace) return;
+      projectResource(item.titulo, enlace.url);
+    });
+  });
+
+  dom.biblioList.querySelectorAll("[data-biblio-send]").forEach(button => {
+    button.addEventListener("click", () => {
+      const item = biblioItems.find(i => i.id === button.dataset.biblioSend);
+      if (!item) return;
+      sendResourceToStudent(item);
+    });
+  });
+}
+
+// Lanza un recurso al escenario de ambos participantes.
+function projectResource(title, url) {
+  const clean = safeUrl(url);
+  if (!clean) {
+    toast("Ese enlace no se puede proyectar.");
+    return;
+  }
+  launchStage({
+    kind: "resource",
+    title,
+    url: clean,
+    embed: buildResourceEmbed(clean)
+  });
+  toast("Recurso proyectado en el escenario de ambos.");
+}
+
+// Marca el recurso como "activo": el estudiante lo ve en su pestaña Aula
+// con el enlace listo para abrir.
+function sendResourceToStudent(item) {
+  const primary = item.enlaces.find(enlace => safeUrl(enlace.url));
+  appState.activeResource = {
+    id: item.id,
+    title: item.titulo,
+    desc: shorten(item.descripcion, 300) || "Recurso de la biblioteca Musicala.",
+    url: primary ? safeUrl(primary.url) : null,
+    thumbnail: primary?.thumbnail || "",
+    source: "biblioteca"
+  };
+  saveLocal();
+  renderAula();
+  syncPatch({ activeResource: appState.activeResource });
+  toast("Recurso enviado. El estudiante lo ve en su pestaña Aula.");
+}
+
+function shorten(value, max) {
+  const text = String(value ?? "").trim();
+  return text.length > max ? text.slice(0, max - 1).trimEnd() + "…" : text;
+}
+
+function linkHost(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "enlace";
+  }
+}
+
+// Solo URLs http(s) reales: evita javascript: y similares en atributos.
+function safeUrl(value) {
+  try {
+    const url = new URL(String(value ?? ""));
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Decide cómo incrustar un enlace en el escenario.
+function buildResourceEmbed(url) {
+  let match = url.match(/(?:youtube\.com\/(?:watch\?[^#]*v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{6,20})/);
+  if (match) return { type: "youtube", src: `https://www.youtube.com/embed/${match[1]}?rel=0` };
+
+  match = url.match(/drive\.google\.com\/file\/d\/([\w-]+)/);
+  if (match) return { type: "iframe", src: `https://drive.google.com/file/d/${match[1]}/preview` };
+
+  match = url.match(/docs\.google\.com\/(document|presentation|spreadsheets)\/d\/([\w-]+)/);
+  if (match) return { type: "iframe", src: `https://docs.google.com/${match[1]}/d/${match[2]}/preview` };
+
+  if (/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url)) return { type: "image", src: url };
+
+  // Resto de páginas: se intenta incrustar; si el sitio lo bloquea, queda
+  // el botón de abrir en pestaña nueva.
+  return { type: "iframe", src: url };
+}
+
+function renderResourceStage(stage, isTeacher, closeButton) {
+  const url = safeUrl(stage.url);
+  const embed = stage.embed;
+  let body = "";
+
+  if (embed?.type === "image" && safeUrl(embed.src)) {
+    body = `<img class="stage-img" src="${escapeHtml(embed.src)}" alt="${escapeHtml(stage.title || "Recurso")}" />`;
+  } else if (embed?.src && safeUrl(embed.src)) {
+    body = `
+      <div class="stage-embed">
+        <iframe src="${escapeHtml(embed.src)}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy" referrerpolicy="no-referrer"></iframe>
+      </div>
+    `;
+  }
+
+  const soundNote = embed?.type === "youtube"
+    ? " · El video suena en cada dispositivo por separado."
+    : "";
+
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <p class="label">Recurso de la biblioteca</p>
+    <h2 class="stage-resource-title">${escapeHtml(stage.title || "Recurso")}</h2>
+    ${body}
+    ${url ? `<p class="stage-hint"><a class="stage-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Abrir en pestaña nueva ↗</a>${soundNote}</p>` : ""}
+    ${!body && !url ? `<p class="stage-hint">Este recurso no tiene enlace para mostrar.</p>` : ""}
+  `;
 }
 
 function buildScaleExercise() {
@@ -2022,6 +2364,11 @@ function activateTab(tabId) {
   document.querySelectorAll(".tab-content").forEach(content => {
     content.classList.toggle("active", content.id === tabId);
   });
+
+  // La biblioteca se descarga solo cuando el docente abre Recursos.
+  if (tabId === "tab-recursos" && appState.role !== "estudiante" && !biblioLoaded) {
+    initBiblioteca();
+  }
 }
 
 function copyLink() {

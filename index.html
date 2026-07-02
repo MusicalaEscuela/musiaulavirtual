@@ -147,6 +147,7 @@
             <button id="toggleMic" class="vc-btn" title="Silenciar micrófono">🎙️</button>
             <button id="toggleCam" class="vc-btn" title="Apagar cámara">📷</button>
             <button id="toggleMusicMode" class="vc-btn" title="Modo música: audio sin filtros de voz (usa audífonos)">🎼</button>
+            <button id="shareScreen" class="vc-btn teacher-only" title="Compartir pantalla (tu cámara vuelve al terminar)">🖥️</button>
             <button id="toggleStats" class="vc-btn" title="Diagnóstico de conexión">📊</button>
             <button id="reconnectVideo" class="vc-btn teacher-only" title="Reintentar conexión de video">↻</button>
           </div>
@@ -280,7 +281,24 @@
 
         <section id="tab-recursos" class="tab-content">
           <div class="section-head">
-            <h2>Recursos</h2>
+            <h2>Biblioteca Musicala</h2>
+            <button id="biblioRefresh" class="tiny" title="Volver a descargar la biblioteca">↻ Actualizar</button>
+          </div>
+          <p id="biblioStatus" class="hint">Abriendo la biblioteca...</p>
+
+          <input id="biblioSearch" type="search" placeholder="Buscar por título, tema o etiqueta..." />
+          <div class="biblio-filters">
+            <select id="biblioArea"><option value="">Todas las áreas</option></select>
+            <select id="biblioCategoria"><option value="">Todas las categorías</option></select>
+            <select id="biblioNivel"><option value="">Todos los niveles</option></select>
+          </div>
+
+          <div id="biblioList" class="resource-list"></div>
+          <button id="biblioMore" class="ghost full hidden">Mostrar más resultados</button>
+          <p class="hint">Los archivos de Google Drive solo se ven si están compartidos como «cualquiera con el enlace». Si un recurso no carga para el estudiante, muéstralo con <strong>Compartir pantalla</strong> (🖥️ en los controles de video).</p>
+
+          <div class="section-head">
+            <h2>Recursos de la clase</h2>
             <button id="addResource" class="tiny">Agregar demo</button>
           </div>
 
