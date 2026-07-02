@@ -6,7 +6,9 @@
   <title>MusiAula Virtual · Musicala</title>
   <meta name="description" content="Aula virtual de Musicala para clases de música 1 a 1: video propio, metrónomo sincronizado, ejercicios interactivos y bitácora." />
   <link rel="icon" type="image/png" href="./logo.png" />
-  <link rel="stylesheet" href="./styles.css" />
+  <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
+       Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
+  <link rel="stylesheet" href="./styles.css?v=3" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -414,6 +416,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js"></script>
+  <script type="module" src="./app.js?v=3"></script>
 </body>
 </html>
