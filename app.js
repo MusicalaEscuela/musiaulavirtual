@@ -9,7 +9,7 @@ import {
   signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { firebaseConfig } from "./firebase-config.js";
-import { loadBiblioteca } from "./biblioteca.js?v=3";
+import { loadBiblioteca } from "./biblioteca.js?v=4";
 
 const NOTES = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si"];
 const STORAGE_KEY = "musiaula_prototipo_v2";
@@ -535,10 +535,15 @@ function launchStage(stage) {
 }
 
 function clearStage() {
+  const stageId = appState.stage?.id;
   appState.stage = null;
   saveLocal();
   renderStage();
   syncPatch({ stage: null });
+  // Borra las anotaciones del recurso que se cerró para no dejar basura en RTDB.
+  if (stageId && firebaseReady && roomPath) {
+    remove(ref(db, `${roomPath}/annot/${stageId}`)).catch(() => {});
+  }
   toast("Escenario limpio.");
 }
 
@@ -699,7 +704,9 @@ function mergeState(incoming) {
       }
       return;
     }
-    if (key === "stage" && JSON.stringify(incoming.stage) !== JSON.stringify(appState.stage)) {
+    // Comparar por id (único por lanzamiento): RTDB reordena las claves y un
+    // stringify directo re-renderizaría el escenario con el eco de uno mismo.
+    if (key === "stage" && incoming.stage?.id !== appState.stage?.id) {
       stageChanged = true;
     }
     appState[key] = incoming[key];
@@ -1208,6 +1215,7 @@ function renderStage() {
     stageTimer = null;
   }
   clearGameTimers();
+  clearAnnotations();
 
   const stage = appState.stage;
   if (!stage) {
@@ -1836,7 +1844,7 @@ function renderBiblioteca() {
         .map(({ enlace, index }) => `
           <div class="biblio-link">
             <span class="biblio-link-name" title="${escapeHtml(enlace.url)}">${escapeHtml(enlace.titulo || linkHost(enlace.url))}</span>
-            <button class="primary tiny" data-biblio-project="${escapeHtml(item.id)}" data-link-index="${index}">▶ Proyectar</button>
+            <button class="primary tiny" data-biblio-project="${escapeHtml(item.id)}" data-link-index="${index}" title="Se abre en grande para los dos al mismo tiempo">📺 Ver juntos</button>
           </div>
         `).join("");
 
@@ -1955,12 +1963,12 @@ function buildResourceEmbed(url) {
 function renderResourceStage(stage, isTeacher, closeButton) {
   const url = safeUrl(stage.url);
   const embed = stage.embed;
-  let body = "";
+  let media = "";
 
   if (embed?.type === "image" && safeUrl(embed.src)) {
-    body = `<img class="stage-img" src="${escapeHtml(embed.src)}" alt="${escapeHtml(stage.title || "Recurso")}" />`;
+    media = `<img class="stage-img" src="${escapeHtml(embed.src)}" alt="${escapeHtml(stage.title || "Recurso")}" />`;
   } else if (embed?.src && safeUrl(embed.src)) {
-    body = `
+    media = `
       <div class="stage-embed">
         <iframe src="${escapeHtml(embed.src)}" allow="autoplay; encrypted-media; fullscreen" allowfullscreen loading="lazy" referrerpolicy="no-referrer"></iframe>
       </div>
@@ -1971,14 +1979,226 @@ function renderResourceStage(stage, isTeacher, closeButton) {
     ? " · El video suena en cada dispositivo por separado."
     : "";
 
+  const toolsRow = isTeacher && media ? `
+    <div class="annot-tools" data-annot-tools>
+      <button class="secondary tiny" data-tool="pointer" title="El estudiante ve tu dedo moverse sobre el recurso">👆 Señalar</button>
+      <button class="secondary tiny" data-tool="draw" title="Dibuja encima y el estudiante lo ve en vivo">✏️ Dibujar</button>
+      <button class="ghost tiny" data-annot-clear>🧽 Limpiar</button>
+    </div>
+    <p class="hint annot-hint">Con Señalar o Dibujar activo, el documento/video no recibe clics: vuelve a tocar la herramienta para desactivarla.</p>
+  ` : "";
+
   dom.stageArea.innerHTML = `
     ${closeButton}
     <p class="label">Recurso de la biblioteca</p>
     <h2 class="stage-resource-title">${escapeHtml(stage.title || "Recurso")}</h2>
-    ${body}
+    ${media ? `
+      <div class="stage-media" data-annot-media>
+        ${media}
+        <canvas class="annot-canvas" data-annot-canvas></canvas>
+        <div class="annot-pointer hidden" data-annot-pointer>👆</div>
+      </div>
+    ` : ""}
+    ${toolsRow}
     ${url ? `<p class="stage-hint"><a class="stage-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Abrir en pestaña nueva ↗</a>${soundNote}</p>` : ""}
-    ${!body && !url ? `<p class="stage-hint">Este recurso no tiene enlace para mostrar.</p>` : ""}
+    ${!media && !url ? `<p class="stage-hint">Este recurso no tiene enlace para mostrar.</p>` : ""}
   `;
+
+  if (media) setupResourceAnnotations(stage, isTeacher);
+}
+
+/* ===== Puntero compartido y anotaciones sobre el recurso =====
+   El docente puede señalar (el estudiante ve su dedo moverse) o dibujar
+   encima del recurso proyectado. Los trazos viajan por RTDB en coordenadas
+   normalizadas (0..1), así se ven bien en pantallas de distinto tamaño. */
+
+let annotUnsubs = [];
+let annotStrokes = new Map(); // strokeId -> { pts: [{x,y}, ...] }
+let annotTool = null;
+
+function clearAnnotations() {
+  annotUnsubs.forEach(unsub => { try { unsub(); } catch {} });
+  annotUnsubs = [];
+  annotStrokes = new Map();
+  annotTool = null;
+}
+
+function setupResourceAnnotations(stage, isTeacher) {
+  const media = dom.stageArea.querySelector("[data-annot-media]");
+  const canvas = dom.stageArea.querySelector("[data-annot-canvas]");
+  const pointerEl = dom.stageArea.querySelector("[data-annot-pointer]");
+  if (!media || !canvas) return;
+
+  const ctx = canvas.getContext("2d");
+  const INK = "#e0218a";
+
+  const drawPts = pts => {
+    if (!pts || pts.length < 2) return;
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x * canvas.width, pts[0].y * canvas.height);
+    for (let i = 1; i < pts.length; i++) {
+      ctx.lineTo(pts[i].x * canvas.width, pts[i].y * canvas.height);
+    }
+    ctx.stroke();
+  };
+
+  const redraw = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (const s of annotStrokes.values()) drawPts(s.pts);
+  };
+
+  // El bitmap del canvas debe seguir el tamaño real del recurso. No basta con
+  // ResizeObserver (no existe en todos los entornos): también se re-verifica
+  // al redimensionar la ventana, al cargar la imagen y antes de cada uso.
+  const syncSize = () => {
+    const rect = media.getBoundingClientRect();
+    const w = Math.max(1, Math.round(rect.width));
+    const h = Math.max(1, Math.round(rect.height));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+      redraw();
+    }
+  };
+  syncSize();
+  if (typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(syncSize);
+    observer.observe(media);
+    annotUnsubs.push(() => observer.disconnect());
+  }
+  window.addEventListener("resize", syncSize);
+  annotUnsubs.push(() => window.removeEventListener("resize", syncSize));
+  media.querySelector("img")?.addEventListener("load", syncSize);
+
+  // Todos escuchan los trazos y el puntero del otro lado.
+  if (firebaseReady && roomPath) {
+    const eventsRef = ref(db, `${roomPath}/annot/${stage.id}/events`);
+    annotUnsubs.push(onChildAdded(eventsRef, snap => {
+      const ev = snap.val();
+      if (!ev) return;
+      if (ev.kind === "clear") {
+        annotStrokes = new Map();
+        redraw();
+        return;
+      }
+      if (ev.kind === "seg" && ev.by !== CLIENT_ID && Array.isArray(ev.pts)) {
+        syncSize();
+        const s = annotStrokes.get(ev.strokeId) || { pts: [] };
+        // Conecta con el último punto previo para que el trazo sea continuo.
+        const joined = s.pts.length ? [s.pts[s.pts.length - 1], ...ev.pts] : ev.pts;
+        s.pts = s.pts.concat(ev.pts);
+        annotStrokes.set(ev.strokeId, s);
+        drawPts(joined);
+      }
+    }));
+
+    const pointerRef = ref(db, `${roomPath}/annot/${stage.id}/pointer`);
+    annotUnsubs.push(onValue(pointerRef, snap => {
+      const p = snap.val();
+      if (!p || !p.on || p.by === CLIENT_ID) {
+        pointerEl.classList.add("hidden");
+        return;
+      }
+      pointerEl.classList.remove("hidden");
+      pointerEl.style.left = (p.x * 100) + "%";
+      pointerEl.style.top = (p.y * 100) + "%";
+    }));
+  }
+
+  if (!isTeacher) return;
+
+  /* --- Herramientas del docente --- */
+  const tools = dom.stageArea.querySelector("[data-annot-tools]");
+  if (!tools) return;
+
+  const sendPointer = pos => {
+    if (!firebaseReady || !roomPath) return;
+    set(ref(db, `${roomPath}/annot/${stage.id}/pointer`),
+      pos ? { ...pos, on: true, by: CLIENT_ID } : { on: false, by: CLIENT_ID }
+    ).catch(() => {});
+  };
+
+  const setTool = tool => {
+    annotTool = annotTool === tool ? null : tool;
+    syncSize();
+    canvas.classList.toggle("active", !!annotTool);
+    canvas.style.cursor = annotTool === "draw" ? "crosshair" : annotTool === "pointer" ? "pointer" : "";
+    tools.querySelectorAll("[data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === annotTool));
+    if (!annotTool) sendPointer(null);
+  };
+  tools.querySelector('[data-tool="pointer"]').addEventListener("click", () => setTool("pointer"));
+  tools.querySelector('[data-tool="draw"]').addEventListener("click", () => setTool("draw"));
+  tools.querySelector("[data-annot-clear]").addEventListener("click", () => {
+    annotStrokes = new Map();
+    redraw();
+    if (firebaseReady && roomPath) {
+      push(ref(db, `${roomPath}/annot/${stage.id}/events`), { kind: "clear", by: CLIENT_ID }).catch(() => {});
+    }
+  });
+
+  const norm = e => {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: Math.round(Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)) * 1000) / 1000,
+      y: Math.round(Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)) * 1000) / 1000
+    };
+  };
+
+  let stroke = null; // { id, pts, pending }
+  let lastPointerSend = 0;
+
+  const flushStroke = () => {
+    if (!stroke || !stroke.pending.length) return;
+    if (firebaseReady && roomPath) {
+      push(ref(db, `${roomPath}/annot/${stage.id}/events`), {
+        kind: "seg", strokeId: stroke.id, by: CLIENT_ID, pts: stroke.pending
+      }).catch(() => {});
+    }
+    stroke.pending = [];
+  };
+
+  const endStroke = () => {
+    if (!stroke) return;
+    flushStroke();
+    annotStrokes.set(stroke.id, { pts: stroke.pts });
+    stroke = null;
+  };
+
+  canvas.addEventListener("pointerdown", e => {
+    if (annotTool !== "draw") return;
+    syncSize();
+    try { canvas.setPointerCapture(e.pointerId); } catch {}
+    const p = norm(e);
+    stroke = { id: cryptoId(), pts: [p], pending: [p] };
+  });
+
+  canvas.addEventListener("pointermove", e => {
+    if (annotTool === "pointer") {
+      const now = Date.now();
+      if (now - lastPointerSend > 60) {
+        lastPointerSend = now;
+        sendPointer(norm(e));
+      }
+      return;
+    }
+    if (annotTool !== "draw" || !stroke) return;
+    const prev = stroke.pts[stroke.pts.length - 1];
+    const p = norm(e);
+    stroke.pts.push(p);
+    stroke.pending.push(p);
+    drawPts([prev, p]);
+    if (stroke.pending.length >= 10) flushStroke(); // el otro lado lo ve casi en vivo
+  });
+
+  canvas.addEventListener("pointerup", endStroke);
+  canvas.addEventListener("pointercancel", endStroke);
+  canvas.addEventListener("pointerleave", () => {
+    if (annotTool === "pointer") sendPointer(null);
+  });
 }
 
 function buildScaleExercise() {

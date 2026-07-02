@@ -1214,6 +1214,8 @@ hr {
   border-top: 1px dashed var(--line);
 }
 .biblio-link-name {
+  flex: 1;
+  min-width: 0; /* permite que el nombre se recorte y el botón nunca se salga */
   font-size: 0.85rem;
   color: var(--muted);
   overflow: hidden;
@@ -1325,3 +1327,47 @@ hr {
   color: var(--muted);
   margin-top: 2px;
 }
+
+/* ===== Puntero compartido y anotaciones ===== */
+.stage-media {
+  position: relative;
+  width: min(100%, 960px);
+  margin: 0 auto;
+}
+.stage-media .stage-embed { width: 100%; margin: 0; }
+.stage-media .stage-img { margin: 0 auto; }
+
+.annot-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
+  pointer-events: none;
+  touch-action: none;
+}
+.annot-canvas.active { pointer-events: auto; }
+
+.annot-pointer {
+  position: absolute;
+  z-index: 6;
+  font-size: 1.8rem;
+  transform: translate(-35%, -15%);
+  pointer-events: none;
+  transition: left 0.06s linear, top 0.06s linear;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.65));
+}
+
+.annot-tools {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+.annot-tools button.on {
+  background: var(--pink);
+  border-color: var(--pink);
+  color: #fff;
+}
+.annot-hint { text-align: center; margin: 0.3rem 0 0; font-size: 0.75rem; }
