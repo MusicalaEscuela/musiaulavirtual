@@ -1247,3 +1247,72 @@ hr {
   color: var(--cream);
   font-weight: 700;
 }
+
+/* ===== Chat de la clase ===== */
+.quick-responses {
+  grid-template-columns: repeat(3, 1fr);
+  margin: 0.6rem 0;
+}
+.quick-responses button {
+  justify-content: center;
+  font-size: 0.85rem;
+  padding: 0.5rem 0.4rem;
+}
+.quick-responses button:nth-child(-n+3) {
+  grid-column: span 1;
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 0.7rem;
+}
+.chat-form input { flex: 1; }
+.chat-form button {
+  flex-shrink: 0;
+  padding: 0.55rem 0.9rem;
+  font-size: 1rem;
+}
+
+.chat-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scroll-behavior: smooth;
+}
+.chat-msg {
+  max-width: 88%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 16px;
+  line-height: 1.4;
+  border: 1px solid var(--line);
+}
+.chat-msg p {
+  margin: 0;
+  color: var(--text);
+  word-break: break-word;
+}
+.chat-msg.mine {
+  justify-self: end;
+  background: rgba(108, 62, 240, 0.35);
+  border-bottom-right-radius: 4px;
+}
+.chat-msg.theirs {
+  justify-self: start;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom-left-radius: 4px;
+}
+.chat-author {
+  display: block;
+  font-weight: 700;
+  color: var(--cream);
+  font-size: 0.72rem;
+  margin-bottom: 2px;
+}
+.chat-time {
+  display: block;
+  text-align: right;
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin-top: 2px;
+}

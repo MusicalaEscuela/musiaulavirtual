@@ -243,6 +243,7 @@ function bindDom() {
     "toggleMic", "toggleCam", "toggleMusicMode", "toggleStats", "statsPanel", "reconnectVideo",
     "shareScreen", "biblioRefresh", "biblioStatus", "biblioSearch", "biblioArea",
     "biblioCategoria", "biblioNivel", "biblioList", "biblioMore",
+    "chatForm", "chatInput",
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
     "registerBtn", "resetPassword", "logoutBtn", "userBadge",
     "metroChip", "metroStateText", "beatIndicatorAula", "meter"
@@ -359,8 +360,16 @@ function setupEvents() {
   dom.quickResponses.forEach(button => {
     button.addEventListener("click", () => {
       sendResponse(button.dataset.response);
-      toast("Respuesta enviada.");
     });
+  });
+
+  dom.chatForm.addEventListener("submit", event => {
+    event.preventDefault();
+    const text = dom.chatInput.value.trim();
+    if (!text) return;
+    sendResponse(text);
+    dom.chatInput.value = "";
+    dom.chatInput.focus();
   });
 
   dom.saveLog.addEventListener("click", () => {
@@ -2031,18 +2040,31 @@ function buildSkipPattern(root) {
 function renderResponses() {
   if (!appState.responses.length) {
     dom.responsesList.className = "log-list empty";
-    dom.responsesList.textContent = "Aún no hay respuestas.";
+    dom.responsesList.textContent = "Aún no hay mensajes. ¡Escribe el primero!";
     return;
   }
 
-  dom.responsesList.className = "log-list";
-  dom.responsesList.innerHTML = appState.responses.slice(0, 12).map(response => `
-    <div class="log-item">
-      <strong>${escapeHtml(response.name)}</strong> · ${escapeHtml(labelRole(response.role))}
-      <br>${escapeHtml(response.text)}
-      <br><small>${formatDate(response.at)}</small>
+  // Como en cualquier chat: los mensajes más recientes abajo.
+  dom.responsesList.className = "log-list chat-list";
+  dom.responsesList.innerHTML = appState.responses.slice(0, 30).reverse().map(response => {
+    const mine = response.name === appState.displayName;
+    return `
+    <div class="chat-msg ${mine ? "mine" : "theirs"}">
+      ${mine ? "" : `<small class="chat-author">${escapeHtml(response.name)} · ${escapeHtml(labelRole(response.role))}</small>`}
+      <p>${escapeHtml(response.text)}</p>
+      <small class="chat-time">${formatTime(response.at)}</small>
     </div>
-  `).join("");
+  `;
+  }).join("");
+  dom.responsesList.scrollTop = dom.responsesList.scrollHeight;
+}
+
+function formatTime(value) {
+  try {
+    return new Intl.DateTimeFormat("es-CO", { timeStyle: "short" }).format(new Date(value));
+  } catch {
+    return "";
+  }
 }
 
 function renderLogs() {

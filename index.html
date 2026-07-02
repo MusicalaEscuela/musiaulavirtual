@@ -267,15 +267,21 @@
             </div>
           </div>
 
-          <div class="quick-responses">
-            <button data-response="Listo ✅">Listo ✅</button>
-            <button data-response="Necesito repetir 🔁">Necesito repetir 🔁</button>
-            <button data-response="Voy perdido 😵‍💫">Voy perdido 😵‍💫</button>
-          </div>
-
           <div>
-            <p class="label">Respuestas recibidas</p>
-            <div id="responsesList" class="log-list empty">Aún no hay respuestas.</div>
+            <p class="label">Chat de la clase</p>
+            <div class="quick-responses">
+              <button data-response="Listo ✅">Listo ✅</button>
+              <button data-response="Necesito repetir 🔁">Necesito repetir 🔁</button>
+              <button data-response="Voy perdido 😵‍💫">Voy perdido 😵‍💫</button>
+              <button data-response="¡Muy bien! 👏">👏</button>
+              <button data-response="Me encanta 💜">💜</button>
+              <button data-response="Jajaja 😂">😂</button>
+            </div>
+            <form id="chatForm" class="chat-form">
+              <input id="chatInput" placeholder="Escribe un mensaje..." maxlength="500" autocomplete="off" />
+              <button type="submit" class="primary">➤</button>
+            </form>
+            <div id="responsesList" class="log-list empty">Aún no hay mensajes. ¡Escribe el primero!</div>
           </div>
         </section>
 
