@@ -1854,9 +1854,6 @@ function renderBiblioteca() {
           ${chips ? `<p class="biblio-meta">${chips}</p>` : ""}
           ${item.descripcion ? `<p>${escapeHtml(shorten(item.descripcion, 180))}</p>` : ""}
           ${links}
-          <div class="actions wrap">
-            <button class="secondary tiny" data-biblio-send="${escapeHtml(item.id)}">Enviar al estudiante</button>
-          </div>
         </article>
       `;
     }).join("");
@@ -1876,13 +1873,6 @@ function renderBiblioteca() {
     });
   });
 
-  dom.biblioList.querySelectorAll("[data-biblio-send]").forEach(button => {
-    button.addEventListener("click", () => {
-      const item = biblioItems.find(i => i.id === button.dataset.biblioSend);
-      if (!item) return;
-      sendResourceToStudent(item);
-    });
-  });
 }
 
 // Lanza un recurso al escenario de ambos participantes.
@@ -1899,24 +1889,6 @@ function projectResource(title, url) {
     embed: buildResourceEmbed(clean)
   });
   toast("Recurso proyectado en el escenario de ambos.");
-}
-
-// Marca el recurso como "activo": el estudiante lo ve en su pestaña Aula
-// con el enlace listo para abrir.
-function sendResourceToStudent(item) {
-  const primary = item.enlaces.find(enlace => safeUrl(enlace.url));
-  appState.activeResource = {
-    id: item.id,
-    title: item.titulo,
-    desc: shorten(item.descripcion, 300) || "Recurso de la biblioteca Musicala.",
-    url: primary ? safeUrl(primary.url) : null,
-    thumbnail: primary?.thumbnail || "",
-    source: "biblioteca"
-  };
-  saveLocal();
-  renderAula();
-  syncPatch({ activeResource: appState.activeResource });
-  toast("Recurso enviado. El estudiante lo ve en su pestaña Aula.");
 }
 
 function shorten(value, max) {
@@ -1953,7 +1925,19 @@ function buildResourceEmbed(url) {
   match = url.match(/docs\.google\.com\/(document|presentation|spreadsheets)\/d\/([\w-]+)/);
   if (match) return { type: "iframe", src: `https://docs.google.com/${match[1]}/d/${match[2]}/preview` };
 
+  match = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  if (match) return { type: "iframe", src: `https://player.vimeo.com/video/${match[1]}` };
+
+  match = url.match(/canva\.com\/design\/([\w-]+)/);
+  if (match) return { type: "iframe", src: `https://www.canva.com/design/${match[1]}/view?embed` };
+
   if (/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url)) return { type: "image", src: url };
+
+  // PDF directo: el visor de Google lo incrusta de forma fiable aunque venga
+  // de otro dominio (un <iframe> al PDF crudo suele bloquearse).
+  if (/\.pdf(\?|$)/i.test(url)) {
+    return { type: "iframe", src: `https://docs.google.com/viewer?embedded=true&url=${encodeURIComponent(url)}` };
+  }
 
   // Resto de páginas: se intenta incrustar; si el sitio lo bloquea, queda
   // el botón de abrir en pestaña nueva.
@@ -1979,6 +1963,13 @@ function renderResourceStage(stage, isTeacher, closeButton) {
     ? " · El video suena en cada dispositivo por separado."
     : "";
 
+  // Páginas genéricas (no YouTube/Drive/Docs/Vimeo/Canva/imagen/PDF): el sitio
+  // podría bloquear la incrustación y verse en blanco. Avisamos con un plan B.
+  const genericEmbed = embed?.type === "iframe" && embed.src === url;
+  const blockNote = genericEmbed
+    ? `<p class="stage-hint">¿Se ve en blanco? Este sitio no permite mostrarse aquí. Ábranlo los dos con el botón de abajo. 👇</p>`
+    : "";
+
   const toolsRow = isTeacher && media ? `
     <div class="annot-tools" data-annot-tools>
       <button class="secondary tiny" data-tool="pointer" title="El estudiante ve tu dedo moverse sobre el recurso">👆 Señalar</button>
@@ -2000,6 +1991,7 @@ function renderResourceStage(stage, isTeacher, closeButton) {
       </div>
     ` : ""}
     ${toolsRow}
+    ${blockNote}
     ${url ? `<p class="stage-hint"><a class="stage-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Abrir en pestaña nueva ↗</a>${soundNote}</p>` : ""}
     ${!media && !url ? `<p class="stage-hint">Este recurso no tiene enlace para mostrar.</p>` : ""}
   `;
