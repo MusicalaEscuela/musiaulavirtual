@@ -1219,11 +1219,13 @@ function renderStage() {
 
   const stage = appState.stage;
   if (!stage) {
+    setFocusMode(false);
     dom.stageArea.classList.add("hidden");
     dom.stageArea.innerHTML = "";
     return;
   }
 
+  setFocusMode(stage.kind === "resource");
   dom.stageArea.classList.remove("hidden");
   const isTeacher = appState.role !== "estudiante";
   const closeButton = isTeacher
@@ -1979,8 +1981,11 @@ function renderResourceStage(stage, isTeacher, closeButton) {
     <p class="hint annot-hint">Con Señalar o Dibujar activo, el documento/video no recibe clics: vuelve a tocar la herramienta para desactivarla.</p>
   ` : "";
 
+  const focusToggle = `<button class="stage-focus-toggle secondary tiny" data-focus-toggle>${focusCollapsed ? "⛶ Pantalla completa" : "⤢ Ver cámaras"}</button>`;
+
   dom.stageArea.innerHTML = `
     ${closeButton}
+    ${focusToggle}
     <p class="label">Recurso de la biblioteca</p>
     <h2 class="stage-resource-title">${escapeHtml(stage.title || "Recurso")}</h2>
     ${media ? `
@@ -1996,6 +2001,15 @@ function renderResourceStage(stage, isTeacher, closeButton) {
     ${!media && !url ? `<p class="stage-hint">Este recurso no tiene enlace para mostrar.</p>` : ""}
   `;
 
+  const focusBtn = dom.stageArea.querySelector("[data-focus-toggle]");
+  if (focusBtn) {
+    focusBtn.addEventListener("click", () => {
+      focusCollapsed = !focusCollapsed;
+      applyFocus();
+      focusBtn.textContent = focusCollapsed ? "⛶ Pantalla completa" : "⤢ Ver cámaras";
+    });
+  }
+
   if (media) setupResourceAnnotations(stage, isTeacher);
 }
 
@@ -2007,6 +2021,24 @@ function renderResourceStage(stage, isTeacher, closeButton) {
 let annotUnsubs = [];
 let annotStrokes = new Map(); // strokeId -> { pts: [{x,y}, ...] }
 let annotTool = null;
+
+/* ===== Modo enfoque =====
+   Al proyectar un recurso la sala se concentra en él: se oculta el panel de
+   herramientas y las cámaras pasan a un recuadro flotante, así el recurso
+   ocupa casi toda la pantalla en ambos participantes. Cada quien puede
+   plegarlo localmente (ver las cámaras en grande) sin cerrar el recurso. */
+let focusWanted = false;    // el escenario actual pide modo enfoque
+let focusCollapsed = false; // este usuario decidió salir del enfoque localmente
+
+function applyFocus() {
+  document.body.classList.toggle("focus-mode", focusWanted && !focusCollapsed);
+}
+
+function setFocusMode(on) {
+  if (!on) focusCollapsed = false; // al cerrar el recurso se reinicia
+  focusWanted = on;
+  applyFocus();
+}
 
 function clearAnnotations() {
   annotUnsubs.forEach(unsub => { try { unsub(); } catch {} });

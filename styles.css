@@ -1337,6 +1337,49 @@ hr {
 .stage-media .stage-embed { width: 100%; margin: 0; }
 .stage-media .stage-img { margin: 0 auto; }
 
+.stage-focus-toggle {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 7;
+}
+
+/* ===== Modo enfoque =====
+   El recurso ocupa casi toda la pantalla: se oculta el panel de herramientas,
+   las cámaras pasan a un recuadro flotante y el escenario crece. Se aplica por
+   igual a docente y estudiante. */
+.focus-mode .tool-panel { display: none; }
+.focus-mode .class-shell { grid-template-columns: minmax(0, 1fr); }
+.focus-mode .video-panel { position: relative; }
+
+.focus-mode .stage {
+  max-height: none;
+  flex: 1 1 auto;
+  overflow: auto;
+}
+.focus-mode .stage-media { width: min(100%, 1400px); }
+.focus-mode .stage-embed { max-height: 78vh; }
+.focus-mode .stage-img { max-width: min(100%, 1400px); max-height: 78vh; }
+
+.focus-mode .video-area {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: clamp(160px, 20vw, 240px);
+  height: auto;
+  aspect-ratio: 4 / 3;
+  min-height: 0;
+  flex: none;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  z-index: 6;
+}
+.focus-mode .video-area .video-controls,
+.focus-mode #localVideo,
+.focus-mode #statsPanel { display: none; }
+
 .annot-canvas {
   position: absolute;
   inset: 0;
