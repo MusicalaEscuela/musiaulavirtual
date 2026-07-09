@@ -10,6 +10,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { loadBiblioteca } from "./biblioteca.js?v=4";
+import { isAuthorizedTeacher } from "./docentes-hub.js?v=1";
 
 const NOTES = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si"];
 const STORAGE_KEY = "musiaula_prototipo_v2";
@@ -55,7 +56,10 @@ let screenStream = null;
 let remoteConnected = false;
 let micOn = true;
 let camOn = true;
-let musicMode = false;
+let musicMode = localStorage.getItem("musiaula-music-mode") === "1";
+let speakerOn = true; // en móvil el audio debe salir por el altavoz, no por el auricular
+let audioOutputs = [];
+let audioOutputIndex = 0;
 let statsTimer = null;
 
 let audioContext = null;
@@ -240,7 +244,7 @@ function bindDom() {
     "btnStagePiano", "btnStageGuitar", "btnStageViolin", "btnStageDrums",
     "btnStageSimon", "btnStageEar", "btnStageMatch", "btnStageCountdown",
     "videoArea", "remoteVideo", "remotePlaceholder", "localVideo",
-    "toggleMic", "toggleCam", "toggleMusicMode", "toggleStats", "statsPanel", "reconnectVideo",
+    "toggleMic", "toggleCam", "toggleMusicMode", "toggleSpeaker", "toggleStats", "statsPanel", "reconnectVideo", "reloadClass",
     "shareScreen", "biblioRefresh", "biblioStatus", "biblioSearch", "biblioArea",
     "biblioCategoria", "biblioNivel", "biblioList", "biblioMore",
     "chatForm", "chatInput",
@@ -501,6 +505,8 @@ function setupEvents() {
   });
 
   dom.toggleMusicMode.addEventListener("click", toggleMusicMode);
+  dom.toggleMusicMode.classList.toggle("on", musicMode);
+  dom.toggleSpeaker.addEventListener("click", cycleAudioOutput);
 
   dom.toggleStats.addEventListener("click", () => {
     const show = dom.statsPanel.classList.toggle("hidden") === false;
@@ -512,6 +518,14 @@ function setupEvents() {
   dom.reconnectVideo.addEventListener("click", () => {
     toast("Reiniciando conexión de video...");
     startTeacherCall();
+  });
+
+  // Botón de emergencia: recarga la página conservando sala, nombre y rol,
+  // así se vuelve a entrar a la clase de una y la conexión arranca limpia.
+  dom.reloadClass.addEventListener("click", () => {
+    toast("🚑 Reconectando la clase...");
+    const url = appState.room ? buildClassUrl(true) : location.href;
+    setTimeout(() => location.replace(url), 300);
   });
 
   dom.shareScreen.addEventListener("click", toggleScreenShare);
@@ -549,10 +563,25 @@ function clearStage() {
 
 /* ===== Sala: Firebase ===== */
 
-function enterClass({ room, displayName, role }) {
+async function enterClass({ room, displayName, role }) {
   if (!displayName) {
     toast("Falta el nombre para entrar.");
     return;
+  }
+
+  // Rol docente: solo correos autorizados en el Directorio del Hub de Docentes.
+  if ((role || "docente") !== "estudiante") {
+    const check = await isAuthorizedTeacher(currentUser?.email);
+    if (!check.ok) {
+      toast(check.reason === "sin-email"
+        ? "Para entrar como docente inicia sesión con tu correo de Musicala."
+        : "Tu correo no está autorizado como docente en el Hub. Pide acceso a coordinación o entra como estudiante.");
+      dom.lobby.classList.remove("hidden");
+      return;
+    }
+    if (check.reason === "sin-verificar") {
+      toast("No se pudo verificar tu acceso con el Hub; entras igual para no frenar la clase.");
+    }
   }
 
   appState.room = normalizeRoom(room);
@@ -755,8 +784,9 @@ async function startVideo() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: { echoCancellation: true, noiseSuppression: true }
+      audio: audioConstraints()
     });
+    tagAudioAsMusic(localStream);
     dom.localVideo.srcObject = localStream;
   } catch (error) {
     console.error("Sin acceso a cámara/micrófono", error);
@@ -835,8 +865,14 @@ async function toggleScreenShare() {
   let stream;
   try {
     stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 } },
-      audio: false
+      // displaySurface "window" sugiere compartir UNA ventana (no toda la
+      // pantalla); el selector del navegador igual deja elegir pestaña o
+      // pantalla completa. surfaceSwitching permite cambiar de ventana sin
+      // volver a compartir.
+      video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 }, displaySurface: "window" },
+      audio: false,
+      surfaceSwitching: "include",
+      selfBrowserSurface: "exclude"
     });
   } catch {
     // El docente canceló el selector o el navegador no lo permite.
@@ -990,6 +1026,77 @@ function routeRemoteAudioToSpeaker(stream) {
   } catch (error) {
     console.warn("No se pudo enrutar el audio al altavoz; uso el elemento de video", error);
     dom.remoteVideo.muted = false;
+  }
+  applyIosSpeaker();
+}
+
+// Restricciones del micrófono según el modo. Aun en modo voz apagamos la
+// supresión de ruido y el control de ganancia: recortan instrumentos y
+// dinámica (clases de música/danza). La cancelación de eco sí queda activa
+// en modo voz para poder trabajar sin audífonos.
+function audioConstraints() {
+  return musicMode
+    ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000 }
+    : { echoCancellation: true, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000 };
+}
+
+// Pista de que el contenido es música: el códec evita el modo "voz" (DTX,
+// recorte de silencios) y conserva el detalle del instrumento.
+function tagAudioAsMusic(stream) {
+  stream?.getAudioTracks().forEach(track => {
+    try { track.contentHint = "music"; } catch {}
+  });
+}
+
+/* ===== Salida de audio: altavoz vs auricular ===== */
+
+// iOS (Safari 16.4+): con el micrófono activo el sistema manda el audio al
+// auricular del oído. Declarar la sesión como "playback" lo fuerza al altavoz.
+function applyIosSpeaker() {
+  if (!("audioSession" in navigator)) return;
+  try {
+    navigator.audioSession.type = speakerOn ? "playback" : "auto";
+  } catch (error) {
+    console.warn("No se pudo cambiar la sesión de audio", error);
+  }
+}
+
+// Botón 🔊: en iOS alterna altavoz/auricular; donde hay setSinkId (Chrome de
+// escritorio y Android recientes) rota entre las salidas disponibles.
+async function cycleAudioOutput() {
+  if ("audioSession" in navigator) {
+    speakerOn = !speakerOn;
+    applyIosSpeaker();
+    dom.toggleSpeaker.textContent = speakerOn ? "🔊" : "📞";
+    toast(speakerOn ? "🔊 Sonido por el altavoz." : "📞 Sonido por el auricular.");
+    return;
+  }
+
+  const canSink = typeof AudioContext !== "undefined" && "setSinkId" in AudioContext.prototype;
+  const canSinkVideo = "setSinkId" in HTMLMediaElement.prototype;
+  if (!canSink && !canSinkVideo) {
+    toast("Este navegador no permite elegir la salida; usa los controles del sistema.");
+    return;
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    audioOutputs = devices.filter(d => d.kind === "audiooutput" && d.deviceId && d.deviceId !== "communications");
+    if (audioOutputs.length < 2) {
+      toast("Solo hay una salida de audio disponible.");
+      return;
+    }
+    audioOutputIndex = (audioOutputIndex + 1) % audioOutputs.length;
+    const device = audioOutputs[audioOutputIndex];
+    const sinkId = device.deviceId === "default" ? "" : device.deviceId;
+
+    if (canSink) await ensureAudio().setSinkId(sinkId);
+    if (canSinkVideo) await dom.remoteVideo.setSinkId(sinkId).catch(() => {});
+
+    toast(`🔊 Salida: ${device.label || "salida " + (audioOutputIndex + 1)}`);
+  } catch (error) {
+    console.warn("No se pudo cambiar la salida de audio", error);
+    toast("No se pudo cambiar la salida de audio.");
   }
 }
 
@@ -2473,11 +2580,8 @@ async function toggleMusicMode() {
   dom.toggleMusicMode.classList.toggle("on", musicMode);
 
   try {
-    const newStream = await navigator.mediaDevices.getUserMedia({
-      audio: musicMode
-        ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000 }
-        : { echoCancellation: true, noiseSuppression: true }
-    });
+    const newStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints() });
+    tagAudioAsMusic(newStream);
     const newTrack = newStream.getAudioTracks()[0];
     newTrack.enabled = micOn;
 
@@ -2491,9 +2595,10 @@ async function toggleMusicMode() {
     const sender = peer?.getSenders().find(s => s.track?.kind === "audio");
     if (sender) await sender.replaceTrack(newTrack);
 
+    localStorage.setItem("musiaula-music-mode", musicMode ? "1" : "0");
     toast(musicMode
-      ? "🎼 Modo música activado: audio sin filtros. Usa audífonos para evitar eco."
-      : "Modo voz activado: filtros de eco y ruido encendidos.");
+      ? "🎼 Modo música activado: audio sin ningún filtro. Usa audífonos para evitar eco."
+      : "Modo voz activado: cancelación de eco encendida (sin filtros que recorten la música).");
   } catch (error) {
     console.error("No se pudo cambiar el modo de audio", error);
     musicMode = !musicMode;

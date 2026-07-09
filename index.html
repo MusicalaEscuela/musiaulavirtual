@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="./logo.png" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=5" />
+  <link rel="stylesheet" href="./styles.css?v=6" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -149,9 +149,11 @@
             <button id="toggleMic" class="vc-btn" title="Silenciar micrófono">🎙️</button>
             <button id="toggleCam" class="vc-btn" title="Apagar cámara">📷</button>
             <button id="toggleMusicMode" class="vc-btn" title="Modo música: audio sin filtros de voz (usa audífonos)">🎼</button>
+            <button id="toggleSpeaker" class="vc-btn" title="Salida de audio: altavoz o auricular">🔊</button>
             <button id="shareScreen" class="vc-btn teacher-only" title="Compartir pantalla (tu cámara vuelve al terminar)">🖥️</button>
             <button id="toggleStats" class="vc-btn" title="Diagnóstico de conexión">📊</button>
             <button id="reconnectVideo" class="vc-btn teacher-only" title="Reintentar conexión de video">↻</button>
+            <button id="reloadClass" class="vc-btn" title="Botón de emergencia: si la clase se traba, reconecta todo">🚑</button>
           </div>
         </div>
       </div>
@@ -416,6 +418,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=5"></script>
+  <script type="module" src="./app.js?v=7"></script>
 </body>
 </html>

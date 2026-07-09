@@ -424,7 +424,9 @@ textarea:focus {
 #remoteVideo {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* contain: se ve el encuadre COMPLETO (cuerpo, instrumento, pantalla
+     compartida) aunque queden franjas; cover recortaba en celular. */
+  object-fit: contain;
   display: block;
   background: #0a0512;
 }
