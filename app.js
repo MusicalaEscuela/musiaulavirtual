@@ -1012,22 +1012,44 @@ function listenForOffer() {
    Prioridad: sonido del instrumento perfecto, baja latencia y salida por altavoz. */
 
 let remoteAudioNode = null;
+let remoteStream = null;
+// Ruta del audio remoto. En celular el sistema decide altavoz/auricular según
+// CÓMO se reproduce: el elemento de video se trata como video-llamada (altavoz,
+// como FaceTime); Web Audio con el micrófono activo suele irse al auricular.
+// Por defecto usamos el elemento en móvil y Web Audio en escritorio, y el
+// botón 🔊 permite alternar por si algún equipo enruta al revés.
+let audioRoute = isMobileDevice() ? "elemento" : "webaudio";
 
-// En móviles el audio de un <video> WebRTC suele enrutarse al AURICULAR.
-// Reproducirlo por Web Audio lo trata como "media" y lo manda al ALTAVOZ.
+function isMobileDevice() {
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent)); // iPad con teclado
+}
+
 function routeRemoteAudioToSpeaker(stream) {
   if (!stream || !stream.getAudioTracks().length) return;
-  try {
-    const ctx = ensureAudio();
-    if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} }
-    remoteAudioNode = ctx.createMediaStreamSource(stream);
-    remoteAudioNode.connect(ctx.destination);
-    dom.remoteVideo.muted = true; // evita doble salida (Web Audio + elemento)
-  } catch (error) {
-    console.warn("No se pudo enrutar el audio al altavoz; uso el elemento de video", error);
-    dom.remoteVideo.muted = false;
-  }
+  remoteStream = stream;
+  applyAudioRoute();
   applyIosSpeaker();
+}
+
+function applyAudioRoute() {
+  if (!remoteStream) return;
+  if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
+
+  if (audioRoute === "webaudio") {
+    try {
+      const ctx = ensureAudio();
+      remoteAudioNode = ctx.createMediaStreamSource(remoteStream);
+      remoteAudioNode.connect(ctx.destination);
+      dom.remoteVideo.muted = true; // evita doble salida (Web Audio + elemento)
+      return;
+    } catch (error) {
+      console.warn("No se pudo enrutar por Web Audio; uso el elemento de video", error);
+    }
+  }
+
+  dom.remoteVideo.muted = false;
+  dom.remoteVideo.play().catch(() => {});
 }
 
 // Restricciones del micrófono según el modo. Aun en modo voz apagamos la
@@ -1061,14 +1083,25 @@ function applyIosSpeaker() {
   }
 }
 
-// Botón 🔊: en iOS alterna altavoz/auricular; donde hay setSinkId (Chrome de
-// escritorio y Android recientes) rota entre las salidas disponibles.
+// Botón 🔊: en iOS con AudioSession alterna altavoz/auricular; en otros
+// celulares alterna la RUTA de reproducción (elemento vs Web Audio), que es
+// lo que decide la salida; en escritorio rota entre las salidas con setSinkId.
 async function cycleAudioOutput() {
   if ("audioSession" in navigator) {
     speakerOn = !speakerOn;
     applyIosSpeaker();
     dom.toggleSpeaker.textContent = speakerOn ? "🔊" : "📞";
     toast(speakerOn ? "🔊 Sonido por el altavoz." : "📞 Sonido por el auricular.");
+    return;
+  }
+
+  if (isMobileDevice()) {
+    audioRoute = audioRoute === "elemento" ? "webaudio" : "elemento";
+    applyAudioRoute();
+    dom.toggleSpeaker.textContent = audioRoute === "elemento" ? "🔊" : "📞";
+    toast(audioRoute === "elemento"
+      ? "🔊 Ruta de altavoz activada."
+      : "📞 Ruta alternativa activada. Si no cambió la salida, toca de nuevo.");
     return;
   }
 
