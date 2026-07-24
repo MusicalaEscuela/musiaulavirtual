@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="./logo.png" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=6" />
+  <link rel="stylesheet" href="./styles.css?v=8" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -54,7 +54,7 @@
       <div>
         <p class="eyebrow">Aula virtual de Musicala</p>
         <h1>MusiAula Virtual</h1>
-        <p class="subtitle">Clases de música 1 a 1 con video propio, metrónomo sincronizado, ejercicios interactivos y bitácora.</p>
+        <p class="subtitle">Clases de música y baile, 1 a 1 o en grupo pequeño, con video propio, metrónomo sincronizado, ejercicios interactivos y bitácora.</p>
       </div>
     </div>
 
@@ -81,6 +81,14 @@
         </label>
 
         <label>
+          Tipo de clase
+          <select id="classMode" name="classMode">
+            <option value="musica">🎵 Música (herramientas visuales e instrumentos)</option>
+            <option value="danza">💃 Baile / Danza (prioridad al audio y la música)</option>
+          </select>
+        </label>
+
+        <label>
           Nombre de sala
           <div class="inline-input">
             <input id="roomName" name="roomName" required />
@@ -101,15 +109,16 @@
       <div class="card info-card">
         <h2>Qué incluye esta versión</h2>
         <ul class="feature-list">
-          <li>Videollamada 1 a 1 propia (WebRTC), sin servicios externos.</li>
+          <li>Videollamada propia (WebRTC): 1 a 1 o grupos pequeños (hasta ~5 personas).</li>
           <li>Metrónomo <strong>sincronizado</strong>: docente y estudiante escuchan el mismo pulso.</li>
           <li>Juego de pulso: el estudiante marca el ritmo y el docente ve qué tan exacto va.</li>
           <li>Modo música: audio sin filtros de voz para escuchar el instrumento real.</li>
+          <li>Modo baile 💃: prioridad al audio, música de fondo compartida desde una pestaña (YouTube, Spotify) mezclada con la voz del profe.</li>
           <li>Panel de diagnóstico de conexión (latencia, jitter, pérdida de paquetes).</li>
           <li>Escenario interactivo, generador de escalas, respuestas rápidas y bitácora.</li>
         </ul>
         <div class="warning">
-          <strong>Importante:</strong> pensado para clases 1 a 1 (un docente y un estudiante). Para escuchar bien el metrónomo y el instrumento, usa <strong>audífonos</strong> en ambos lados.
+          <strong>Importante:</strong> funciona 1 a 1 y en grupos pequeños (hasta ~5 personas; cada participante extra consume más internet de todos). Para escuchar bien el metrónomo y el instrumento, usa <strong>audífonos</strong>.
         </div>
       </div>
     </div>
@@ -137,11 +146,11 @@
       <div class="video-panel card">
         <div id="stageArea" class="stage hidden" aria-live="polite"></div>
         <div id="videoArea" class="video-area">
-          <video id="remoteVideo" autoplay playsinline></video>
+          <div id="videoGrid" class="video-grid"></div>
           <div id="remotePlaceholder" class="remote-placeholder">
             <div class="spinner"></div>
-            <p>Esperando al otro participante...</p>
-            <small>Comparte el enlace de la sala para que se conecte.</small>
+            <p>Esperando a los demás participantes...</p>
+            <small>Comparte el enlace de la sala para que se conecten.</small>
           </div>
           <video id="localVideo" autoplay playsinline muted></video>
           <div id="statsPanel" class="stats-panel hidden"></div>
@@ -171,7 +180,17 @@
           <h2>Control del escenario</h2>
           <p class="muted">Lo que lances aquí aparece en grande sobre el video de <strong>todos</strong> los participantes. El estudiante no puede cambiarlo, solo interactuar cuando tú lo permitas.</p>
 
-          <div class="mini-form">
+          <div class="mini-form dance-only">
+            <h3>Música para bailar 🎶</h3>
+            <p class="hint">Comparte una <strong>pestaña</strong> del navegador (YouTube, Spotify Web...) y marca la casilla <strong>«Compartir audio de la pestaña»</strong>. La música se mezcla con tu voz y le llega al estudiante con calidad completa.</p>
+            <button id="btnShareMusic" class="primary full">🎶 Compartir música (pestaña con audio)</button>
+            <label>
+              Volumen de la música (tu voz siempre queda por encima)
+              <input id="danceMusicVol" type="range" min="0" max="1.5" step="0.05" value="0.8" />
+            </label>
+          </div>
+
+          <div class="mini-form music-only">
             <h3>Nota gigante</h3>
             <label>
               Nota
@@ -188,13 +207,13 @@
             <button id="btnStageNote" class="primary full">Mostrar nota gigante</button>
           </div>
 
-          <div class="mini-form">
+          <div class="mini-form music-only">
             <h3>Secuencia animada</h3>
             <p class="hint">Usa la nota inicial y el modo de la pestaña Ejercicio. Las notas se iluminan una por una al ritmo del BPM.</p>
             <button id="btnStageSeq" class="primary full">Lanzar secuencia animada</button>
           </div>
 
-          <div class="mini-form">
+          <div class="mini-form music-only">
             <h3>Juego: ¿qué nota sigue?</h3>
             <p class="hint">El estudiante ve la pregunta con botones y tú recibes su respuesta al instante.</p>
             <button id="btnStageQuiz" class="primary full">Lanzar juego</button>
@@ -206,7 +225,7 @@
             <button id="btnStagePulse" class="primary full">Lanzar juego de pulso</button>
           </div>
 
-          <div class="mini-form">
+          <div class="mini-form music-only">
             <h3>Instrumentos interactivos 🎹</h3>
             <p class="hint">Aparecen en pantalla del estudiante y <strong>suenan de verdad</strong> al tocarlos. Úsalos para mostrar notas, escuchar y que el estudiante explore.</p>
             <div class="actions wrap">
@@ -222,8 +241,8 @@
             <p class="hint">Juegos cortos e interactivos. El estudiante juega en su pantalla y tú recibes el resultado.</p>
             <div class="actions wrap">
               <button id="btnStageSimon" class="secondary tiny">🟢 Simón dice</button>
-              <button id="btnStageEar" class="secondary tiny">👂 Adivina la nota</button>
-              <button id="btnStageMatch" class="secondary tiny">🃏 Pares musicales</button>
+              <button id="btnStageEar" class="secondary tiny music-only">👂 Adivina la nota</button>
+              <button id="btnStageMatch" class="secondary tiny music-only">🃏 Pares musicales</button>
               <button id="btnStageCountdown" class="secondary tiny">⏱️ Cuenta regresiva</button>
             </div>
           </div>
@@ -329,6 +348,7 @@
         </section>
 
         <section id="tab-ejercicio" class="tab-content">
+          <div class="music-only">
           <h2>Ejercicio de notas</h2>
           <p class="muted">Construcción de la secuencia desde cada nota. Básico, útil y sin fuegos artificiales innecesarios.</p>
 
@@ -364,6 +384,7 @@
           </div>
 
           <hr />
+          </div>
 
           <h2>Metrónomo sincronizado</h2>
           <div class="metronome">
@@ -418,6 +439,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=8"></script>
+  <script type="module" src="./app.js?v=12"></script>
 </body>
 </html>

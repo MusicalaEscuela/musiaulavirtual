@@ -15,10 +15,30 @@ import { isAuthorizedTeacher } from "./docentes-hub.js?v=1";
 const NOTES = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si"];
 const STORAGE_KEY = "musiaula_prototipo_v2";
 
+// TURN de respaldo: cuando la red del estudiante (datos móviles, WiFi de
+// colegio) bloquea la conexión directa, el audio/video viaja por este relé
+// en vez de caerse. Para activarlo: crear cuenta gratis en
+// https://dashboard.metered.ca/signup (0,5 GB/mes gratis) o en Cloudflare
+// Calls, copiar las URLs y credenciales del panel y pegarlas aquí.
+const TURN_SERVER = {
+  urls: [
+    "turn:standard.relay.metered.ca:80",
+    "turn:standard.relay.metered.ca:80?transport=tcp",
+    "turn:standard.relay.metered.ca:443",
+    "turns:standard.relay.metered.ca:443?transport=tcp"
+  ],
+  username: "bf961b913a6313d442e27725",
+  credential: "lgFN2S3/nYFP5yyb"
+};
+
 const RTC_CONFIG = {
   iceServers: [
-    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }
-  ]
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+    // Solo se incluye el TURN si ya tiene credenciales configuradas.
+    ...(TURN_SERVER.urls.length && TURN_SERVER.username ? [TURN_SERVER] : [])
+  ],
+  // Con más candidatos (directos + relé) el navegador elige el mejor camino.
+  iceCandidatePoolSize: 4
 };
 
 const defaultResources = [
@@ -50,10 +70,12 @@ let participantsCount = 0;
 let unsubscribers = [];
 let pendingAutoJoin = null;
 
-let peer = null;
+// Malla WebRTC: una conexión por pareja de participantes.
+// clientId -> { pc, name, stream, tile, videoEl, audioNode, pendingCandidates }
+let peers = new Map();
+let lastParticipants = {}; // último snapshot de presencia, para reconectar
 let localStream = null;
 let screenStream = null;
-let remoteConnected = false;
 let micOn = true;
 let camOn = true;
 let musicMode = localStorage.getItem("musiaula-music-mode") === "1";
@@ -88,6 +110,7 @@ let appState = {
   room: "",
   displayName: "",
   role: "docente",
+  classMode: "musica", // "musica" | "danza": cambia herramientas y prioridad de audio
   objective: "",
   activeResource: null,
   activeExercise: null,
@@ -121,6 +144,7 @@ function init() {
   dom.roomName.value = roomParam || makeRoomName();
   dom.displayName.value = nameParam || appState.displayName || "";
   dom.role.value = roleParam || appState.role || "docente";
+  dom.classMode.value = appState.classMode === "danza" ? "danza" : "musica";
 
   setupEvents();
   renderAll();
@@ -231,7 +255,8 @@ function setupAuthEvents() {
 
 function bindDom() {
   [
-    "toast", "lobby", "app", "joinForm", "displayName", "role", "roomName", "randomRoom",
+    "toast", "lobby", "app", "joinForm", "displayName", "role", "classMode", "roomName", "randomRoom",
+    "btnShareMusic", "danceMusicVol",
     "copyLobbyLink", "roomTitle", "connectionStatus", "copyClassLink",
     "leaveClass", "objectiveInput", "publishObjective", "objectiveView",
     "activeResourceTitle", "activeResourceDesc", "activeExerciseTitle", "activeExerciseBody",
@@ -243,7 +268,7 @@ function bindDom() {
     "btnStagePulse", "btnStageCelebrate", "btnStageClear",
     "btnStagePiano", "btnStageGuitar", "btnStageViolin", "btnStageDrums",
     "btnStageSimon", "btnStageEar", "btnStageMatch", "btnStageCountdown",
-    "videoArea", "remoteVideo", "remotePlaceholder", "localVideo",
+    "videoArea", "videoGrid", "remotePlaceholder", "localVideo",
     "toggleMic", "toggleCam", "toggleMusicMode", "toggleSpeaker", "toggleStats", "statsPanel", "reconnectVideo", "reloadClass",
     "shareScreen", "biblioRefresh", "biblioStatus", "biblioSearch", "biblioArea",
     "biblioCategoria", "biblioNivel", "biblioList", "biblioMore",
@@ -516,8 +541,8 @@ function setupEvents() {
   });
 
   dom.reconnectVideo.addEventListener("click", () => {
-    toast("Reiniciando conexión de video...");
-    startTeacherCall();
+    toast("Reiniciando conexiones de video...");
+    reconnectAllPeers();
   });
 
   // Botón de emergencia: recarga la página conservando sala, nombre y rol,
@@ -529,6 +554,13 @@ function setupEvents() {
   });
 
   dom.shareScreen.addEventListener("click", toggleScreenShare);
+
+  // Modo baile: compartir música usa el mismo flujo de compartir pantalla,
+  // pero pidiendo el audio de la pestaña (ver toggleScreenShare).
+  dom.btnShareMusic?.addEventListener("click", toggleScreenShare);
+  dom.danceMusicVol?.addEventListener("input", () => {
+    if (musicMixer) musicMixer.gain.gain.value = Number(dom.danceMusicVol.value);
+  });
 
   dom.biblioRefresh.addEventListener("click", () => initBiblioteca({ force: true }));
   dom.biblioSearch.addEventListener("input", () => { biblioVisible = 30; renderBiblioteca(); });
@@ -559,6 +591,91 @@ function clearStage() {
     remove(ref(db, `${roomPath}/annot/${stageId}`)).catch(() => {});
   }
   toast("Escenario limpio.");
+}
+
+/* ===== Modo de clase: música o baile =====
+   "musica": todas las herramientas visuales e instrumentos.
+   "danza": prioridad al audio — se ocultan las herramientas de notas y se
+   habilita compartir música desde una pestaña, mezclada con la voz. */
+
+function applyClassMode(mode) {
+  const m = mode === "danza" ? "danza" : "musica";
+  const changed = appState.classMode !== m || !document.body.dataset.modeApplied;
+  appState.classMode = m;
+  document.body.dataset.modeApplied = "1";
+  document.body.classList.toggle("mode-danza", m === "danza");
+  if (dom.classMode && dom.classMode.value !== m) dom.classMode.value = m;
+
+  // En baile la música de fondo debe llegar completa: audio sin filtros de
+  // voz desde el arranque (equivale a encender el modo música 🎼).
+  if (m === "danza" && !musicMode) {
+    if (localStream) {
+      toggleMusicMode();
+    } else {
+      musicMode = true;
+      dom.toggleMusicMode?.classList.add("on");
+      localStorage.setItem("musiaula-music-mode", "1");
+    }
+    if (changed) toast("💃 Modo baile: audio de alta calidad activado.");
+  }
+}
+
+/* ===== Mezcla de música (modo baile) =====
+   El audio de la pestaña compartida (YouTube, Spotify Web...) se mezcla con
+   el micrófono en un solo track (Web Audio) y se envía por la llamada que ya
+   existe, sin renegociar. El slider controla solo el volumen de la música. */
+
+let musicMixer = null; // { dest, micSrc, musicSrc, gain, tabTrack }
+
+function startMusicMix(tabTrack) {
+  try {
+    const ctx = ensureAudio();
+    const dest = ctx.createMediaStreamDestination();
+    const gain = ctx.createGain();
+    gain.gain.value = Number(dom.danceMusicVol?.value || 0.8);
+
+    const musicSrc = ctx.createMediaStreamSource(new MediaStream([tabTrack]));
+    musicSrc.connect(gain);
+    gain.connect(dest);
+
+    let micSrc = null;
+    const micTrack = localStream?.getAudioTracks()[0];
+    if (micTrack) {
+      micSrc = ctx.createMediaStreamSource(new MediaStream([micTrack]));
+      micSrc.connect(dest);
+    }
+
+    musicMixer = { dest, micSrc, musicSrc, gain, tabTrack };
+
+    const mixedTrack = dest.stream.getAudioTracks()[0];
+    forEachSender("audio", sender => sender.replaceTrack(mixedTrack).catch(console.warn));
+    toast("🎶 Música compartida: tu voz y la música viajan juntas a la clase.");
+  } catch (error) {
+    console.warn("No se pudo mezclar la música de la pestaña", error);
+    toast("No se pudo mezclar el audio de la pestaña; el video sí se comparte.");
+  }
+}
+
+function stopMusicMix() {
+  if (!musicMixer) return;
+  try { musicMixer.musicSrc.disconnect(); } catch {}
+  try { musicMixer.micSrc?.disconnect(); } catch {}
+  musicMixer = null;
+
+  const micTrack = localStream?.getAudioTracks()[0];
+  if (micTrack) forEachSender("audio", sender => sender.replaceTrack(micTrack).catch(console.warn));
+}
+
+// Si el micrófono cambia (modo música/voz) mientras hay mezcla activa,
+// se reconecta el mic nuevo a la mezcla en lugar de reemplazar el track enviado.
+function refreshMixerMic() {
+  if (!musicMixer) return;
+  try { musicMixer.micSrc?.disconnect(); } catch {}
+  const micTrack = localStream?.getAudioTracks()[0];
+  if (micTrack) {
+    musicMixer.micSrc = ensureAudio().createMediaStreamSource(new MediaStream([micTrack]));
+    musicMixer.micSrc.connect(musicMixer.dest);
+  }
 }
 
 /* ===== Sala: Firebase ===== */
@@ -592,6 +709,12 @@ async function enterClass({ room, displayName, role }) {
   document.body.classList.toggle("role-estudiante", appState.role === "estudiante");
   document.body.classList.toggle("role-docente", appState.role !== "estudiante");
 
+  // El tipo de clase lo decide el docente; el estudiante lo recibe por la sala.
+  if (appState.role !== "estudiante") {
+    appState.classMode = dom.classMode?.value === "danza" ? "danza" : "musica";
+  }
+  applyClassMode(appState.classMode);
+
   const url = buildClassUrl(true);
   history.replaceState(null, "", url);
 
@@ -613,9 +736,12 @@ async function connectRoom() {
   roomPath = `rooms/${appState.room}`;
   setStatus("Conectando", false);
 
+  // Cámara y micrófono primero: así cada conexión nueva ya lleva mis tracks.
+  await ensureLocalMedia();
+
   try {
     // Presencia: aparezco en la sala y desaparezco solo si me desconecto.
-    presenceRef = push(ref(db, `${roomPath}/participants`));
+    presenceRef = ref(db, `${roomPath}/participants/${CLIENT_ID}`);
     await set(presenceRef, {
       name: appState.displayName,
       role: appState.role,
@@ -629,9 +755,14 @@ async function connectRoom() {
     return;
   }
 
+  // Buzón de señalización propio: aquí me dejan ofertas/respuestas/candidatos.
+  listenSignals();
+
   listen(ref(db, `${roomPath}/participants`), snapshot => {
-    participantsCount = snapshot.size || 0;
+    lastParticipants = snapshot.val() || {};
+    participantsCount = Object.keys(lastParticipants).length;
     renderStatusCount();
+    syncPeers();
   });
 
   // Estado vivo del aula: el docente lo siembra, todos lo escuchan.
@@ -668,7 +799,6 @@ async function connectRoom() {
   });
 
   setStatus("En sala", true);
-  startVideo();
 }
 
 function listen(reference, onValueCb, onChildCb) {
@@ -711,6 +841,7 @@ function sendResponse(text, extra = {}) {
 function publicState() {
   return {
     room: appState.room,
+    classMode: appState.classMode || "musica",
     objective: appState.objective || "",
     activeResource: appState.activeResource,
     activeExercise: appState.activeExercise,
@@ -721,7 +852,7 @@ function publicState() {
 }
 
 function mergeState(incoming) {
-  const allowed = ["objective", "activeResource", "activeExercise", "stage", "resources"];
+  const allowed = ["classMode", "objective", "activeResource", "activeExercise", "stage", "resources"];
   let stageChanged = false;
 
   allowed.forEach(key => {
@@ -745,6 +876,7 @@ function mergeState(incoming) {
   applyMetronome(incoming.metronome || null);
 
   if (!Array.isArray(appState.resources)) appState.resources = [];
+  applyClassMode(appState.classMode);
   saveLocal();
   renderAula();
   renderResources();
@@ -778,9 +910,15 @@ function leaveClass() {
   location.href = location.pathname;
 }
 
-/* ===== Video 1 a 1: WebRTC con señalización por Firebase ===== */
+/* ===== Video: WebRTC en malla (1 a 1 o grupo pequeño) =====
+   Cada pareja de participantes tiene su propia conexión directa. La
+   señalización va por RTDB: cada quien tiene un "buzón" en
+   rooms/X/signals/<id> donde los demás dejan ofertas, respuestas y
+   candidatos. Para evitar choques, en cada pareja siempre inicia la
+   conexión el participante con id menor. */
 
-async function startVideo() {
+async function ensureLocalMedia() {
+  if (localStream) return;
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -790,64 +928,220 @@ async function startVideo() {
     dom.localVideo.srcObject = localStream;
   } catch (error) {
     console.error("Sin acceso a cámara/micrófono", error);
-    toast("No hay acceso a cámara o micrófono. El aula funciona, pero sin video.");
-    dom.remotePlaceholder.querySelector("p").textContent = "Sin cámara local. Revisa permisos del navegador.";
+    toast("No hay acceso a cámara o micrófono. El aula funciona, pero sin enviar video.");
+  }
+}
+
+function listenSignals() {
+  const inbox = ref(db, `${roomPath}/signals/${CLIENT_ID}`);
+  remove(inbox).catch(() => {});
+  listen(query(inbox, limitToLast(200)), null, snap => {
+    const msg = snap.val();
+    remove(snap.ref).catch(() => {}); // cada mensaje se procesa una sola vez
+    if (msg?.from) handleSignal(msg).catch(error => console.warn("Señal fallida", error));
+  });
+}
+
+function sendSignal(toId, msg) {
+  if (!firebaseReady || !roomPath) return;
+  push(ref(db, `${roomPath}/signals/${toId}`), { from: CLIENT_ID, at: Date.now(), ...msg })
+    .catch(console.warn);
+}
+
+// Alinea las conexiones con la lista de presentes: crea las que faltan
+// (cuando me toca iniciar) y cierra las de quienes ya se fueron.
+function syncPeers() {
+  if (!roomPath) return;
+  Object.entries(lastParticipants).forEach(([id, info]) => {
+    if (id === CLIENT_ID || peers.has(id)) return;
+    if (CLIENT_ID < id) initiatePeer(id, info);
+  });
+  [...peers.keys()].forEach(id => {
+    if (!lastParticipants[id]) removePeer(id);
+  });
+}
+
+function createPeerFor(id, info = {}) {
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+  const entry = {
+    id, pc,
+    name: info.name || "Participante",
+    stream: null, tile: null, videoEl: null, audioNode: null,
+    pendingCandidates: []
+  };
+  peers.set(id, entry);
+
+  localStream?.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+  // Si ya estoy compartiendo pantalla o música, quien entra tarde recibe
+  // esos tracks en lugar de la cámara y el micrófono puros.
+  const screenTrack = screenStream?.getVideoTracks()[0];
+  if (screenTrack) {
+    pc.getSenders().find(s => s.track?.kind === "video")?.replaceTrack(screenTrack).catch(() => {});
+  }
+  const mixedTrack = musicMixer?.dest.stream.getAudioTracks()[0];
+  if (mixedTrack) {
+    pc.getSenders().find(s => s.track?.kind === "audio")?.replaceTrack(mixedTrack).catch(() => {});
+  }
+
+  pc.onicecandidate = event => {
+    if (event.candidate) sendSignal(id, { type: "candidate", candidate: event.candidate.toJSON() });
+  };
+
+  pc.ontrack = event => {
+    const [stream] = event.streams;
+    if (stream) attachRemoteStream(entry, stream);
+  };
+
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "connected") {
+      renderStatusCount();
+      tuneAudioLatency(pc);
+      boostAudioBitrate(pc);
+    }
+    if (["disconnected", "failed"].includes(pc.connectionState)) {
+      entry.tile?.classList.add("lost");
+      setStatus("Conexión perdida con un participante...", false);
+      // El iniciador de la pareja la vuelve a levantar si el otro sigue presente.
+      if (pc.connectionState === "failed" && lastParticipants[id] && CLIENT_ID < id) {
+        removePeer(id);
+        initiatePeer(id, lastParticipants[id]);
+      }
+    }
+  };
+
+  return entry;
+}
+
+async function initiatePeer(id, info) {
+  const entry = createPeerFor(id, info);
+  try {
+    const offer = await entry.pc.createOffer();
+    offer.sdp = preferHiFiOpus(offer.sdp);
+    await entry.pc.setLocalDescription(offer);
+    sendSignal(id, { type: "offer", sdp: offer.sdp, name: appState.displayName });
+  } catch (error) {
+    console.warn("No se pudo iniciar la conexión", error);
+  }
+}
+
+async function handleSignal(msg) {
+  const from = msg.from;
+  let entry = peers.get(from);
+
+  if (msg.type === "offer") {
+    // Oferta nueva del mismo participante = reinicio de su conexión.
+    if (entry) removePeer(from);
+    entry = createPeerFor(from, { name: msg.name || lastParticipants[from]?.name });
+    await entry.pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
+    await flushCandidates(entry);
+    const answer = await entry.pc.createAnswer();
+    answer.sdp = preferHiFiOpus(answer.sdp);
+    await entry.pc.setLocalDescription(answer);
+    sendSignal(from, { type: "answer", sdp: answer.sdp, name: appState.displayName });
     return;
   }
 
-  if (appState.role !== "estudiante") {
-    startTeacherCall();
-  } else {
-    listenForOffer();
+  if (msg.type === "reoffer") {
+    // El otro lado pide reiniciar la pareja y a mí me toca iniciar.
+    if (CLIENT_ID < from && lastParticipants[from]) {
+      removePeer(from);
+      initiatePeer(from, lastParticipants[from]);
+    }
+    return;
+  }
+
+  if (!entry) return;
+
+  if (msg.type === "answer") {
+    if (msg.name) { entry.name = msg.name; updateTileName(entry); }
+    if (entry.pc.signalingState === "have-local-offer") {
+      await entry.pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+      await flushCandidates(entry);
+    }
+  } else if (msg.type === "candidate" && msg.candidate) {
+    if (entry.pc.remoteDescription) {
+      await entry.pc.addIceCandidate(new RTCIceCandidate(msg.candidate)).catch(() => {});
+    } else {
+      entry.pendingCandidates.push(msg.candidate);
+    }
   }
 }
 
-function createPeer() {
-  closePeer();
-  peer = new RTCPeerConnection(RTC_CONFIG);
-
-  localStream?.getTracks().forEach(track => peer.addTrack(track, localStream));
-
-  peer.ontrack = event => {
-    const [stream] = event.streams;
-    dom.remoteVideo.srcObject = stream;
-    remoteConnected = true;
-    dom.remotePlaceholder.classList.add("hidden");
-    routeRemoteAudioToSpeaker(stream);
-    tuneAudioLatency();
-    boostAudioBitrate();
-  };
-
-  peer.onconnectionstatechange = () => {
-    if (!peer) return;
-    if (peer.connectionState === "connected") {
-      setStatus(`Video conectado · ${Math.max(participantsCount, 2)} personas`, true);
-    }
-    if (["disconnected", "failed"].includes(peer.connectionState)) {
-      remoteConnected = false;
-      dom.remotePlaceholder.classList.remove("hidden");
-      dom.remotePlaceholder.querySelector("p").textContent = "Se perdió la conexión de video...";
-      setStatus("Video desconectado", false);
-    }
-  };
-
-  return peer;
+async function flushCandidates(entry) {
+  const pending = entry.pendingCandidates.splice(0);
+  for (const candidate of pending) {
+    await entry.pc.addIceCandidate(new RTCIceCandidate(candidate)).catch(() => {});
+  }
 }
 
-function closePeer() {
-  if (peer) {
-    try { peer.close(); } catch {}
-    peer = null;
+function attachRemoteStream(entry, stream) {
+  entry.stream = stream;
+
+  if (!entry.tile) {
+    entry.tile = document.createElement("div");
+    entry.tile.className = "video-tile";
+    entry.videoEl = document.createElement("video");
+    entry.videoEl.autoplay = true;
+    entry.videoEl.playsInline = true;
+    const nameTag = document.createElement("span");
+    nameTag.className = "tile-name";
+    entry.tile.append(entry.videoEl, nameTag);
+    dom.videoGrid.appendChild(entry.tile);
   }
+  entry.tile.classList.remove("lost");
+  updateTileName(entry);
+  entry.videoEl.srcObject = stream;
+  dom.remotePlaceholder.classList.add("hidden");
+
+  routeEntryAudio(entry);
+  applyIosSpeaker();
+}
+
+function updateTileName(entry) {
+  const tag = entry.tile?.querySelector(".tile-name");
+  if (tag) tag.textContent = entry.name || "Participante";
+}
+
+function removePeer(id) {
+  const entry = peers.get(id);
+  if (!entry) return;
+  try { entry.audioNode?.disconnect(); } catch {}
+  try { entry.pc.close(); } catch {}
+  entry.tile?.remove();
+  peers.delete(id);
+  if (!peers.size) dom.remotePlaceholder.classList.remove("hidden");
+}
+
+function closeAllPeers() {
+  [...peers.keys()].forEach(removePeer);
+}
+
+// Botón ↻: tumba todas las conexiones y las vuelve a levantar. A las parejas
+// donde inicia el otro se les pide la reconexión con una señal "reoffer".
+function reconnectAllPeers() {
+  closeAllPeers();
+  syncPeers();
+  Object.keys(lastParticipants).forEach(id => {
+    if (id !== CLIENT_ID && !(CLIENT_ID < id)) sendSignal(id, { type: "reoffer" });
+  });
+}
+
+// Aplica una función al sender de audio o video de CADA conexión activa.
+function forEachSender(kind, fn) {
+  peers.forEach(({ pc }) => {
+    const sender = pc.getSenders().find(s => s.track?.kind === kind);
+    if (sender) fn(sender, pc);
+  });
 }
 
 function hangUp() {
   stopScreenShare(true);
-  closePeer();
+  closeAllPeers();
   localStream?.getTracks().forEach(track => track.stop());
   localStream = null;
-  if (appState.role !== "estudiante" && firebaseReady && roomPath) {
-    remove(ref(db, `${roomPath}/webrtc`)).catch(() => {});
+  if (firebaseReady && roomPath) {
+    remove(ref(db, `${roomPath}/signals/${CLIENT_ID}`)).catch(() => {});
   }
 }
 
@@ -862,15 +1156,20 @@ async function toggleScreenShare() {
     return;
   }
 
+  // En modo baile se pide también el audio de la pestaña para mandar la música.
+  const wantMusic = appState.classMode === "danza";
+
   let stream;
   try {
     stream = await navigator.mediaDevices.getDisplayMedia({
       // displaySurface "window" sugiere compartir UNA ventana (no toda la
-      // pantalla); el selector del navegador igual deja elegir pestaña o
-      // pantalla completa. surfaceSwitching permite cambiar de ventana sin
-      // volver a compartir.
-      video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 }, displaySurface: "window" },
-      audio: false,
+      // pantalla); en baile se sugiere "browser" (pestaña) porque solo las
+      // pestañas comparten audio. surfaceSwitching permite cambiar de ventana
+      // sin volver a compartir.
+      video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 }, displaySurface: wantMusic ? "browser" : "window" },
+      audio: wantMusic
+        ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+        : false,
       surfaceSwitching: "include",
       selfBrowserSurface: "exclude"
     });
@@ -882,34 +1181,38 @@ async function toggleScreenShare() {
   screenStream = stream;
   const screenTrack = stream.getVideoTracks()[0];
 
-  const sender = peer?.getSenders().find(s => s.track?.kind === "video");
-  if (sender) {
-    try {
-      await sender.replaceTrack(screenTrack);
-    } catch (error) {
-      console.warn("No se pudo enviar la pantalla", error);
-    }
+  const tabAudio = stream.getAudioTracks()[0];
+  if (tabAudio) {
+    startMusicMix(tabAudio);
+  } else if (wantMusic) {
+    toast("Consejo: elige una PESTAÑA y marca «Compartir audio» para que suene la música.");
   }
+
+  let sent = 0;
+  forEachSender("video", sender => {
+    sender.replaceTrack(screenTrack).catch(error => console.warn("No se pudo enviar la pantalla", error));
+    sent++;
+  });
 
   dom.localVideo.srcObject = screenStream;
   dom.shareScreen.classList.add("on");
   dom.shareScreen.textContent = "⏹";
   // El navegador tiene su propio botón "Dejar de compartir": lo escuchamos.
   screenTrack.onended = () => stopScreenShare();
-  toast(sender
-    ? "Compartiendo pantalla con el estudiante."
-    : "Compartiendo pantalla. Se enviará cuando el estudiante se conecte de nuevo.");
+  toast(sent
+    ? "Compartiendo pantalla con la clase."
+    : "Compartiendo pantalla. Se enviará cuando alguien se conecte.");
 }
 
 function stopScreenShare(silent = false) {
   if (!screenStream) return;
+  stopMusicMix();
   screenStream.getTracks().forEach(track => track.stop());
   screenStream = null;
 
   const cameraTrack = localStream?.getVideoTracks()[0];
-  const sender = peer?.getSenders().find(s => s.track?.kind === "video");
-  if (sender && cameraTrack) {
-    sender.replaceTrack(cameraTrack).catch(console.warn);
+  if (cameraTrack) {
+    forEachSender("video", sender => sender.replaceTrack(cameraTrack).catch(console.warn));
   }
 
   if (dom.localVideo) dom.localVideo.srcObject = localStream;
@@ -918,101 +1221,9 @@ function stopScreenShare(silent = false) {
   if (!silent) toast("Dejaste de compartir pantalla. Cámara de vuelta.");
 }
 
-// Docente = quien llama: publica oferta y espera respuesta.
-async function startTeacherCall() {
-  if (!localStream || !firebaseReady || !roomPath) return;
-
-  // La conexión nueva arranca con la cámara; si se estaba compartiendo
-  // pantalla, se corta para no dejar un estado a medias.
-  stopScreenShare(true);
-
-  const rtcRef = ref(db, `${roomPath}/webrtc`);
-  await remove(rtcRef).catch(() => {});
-
-  const pc = createPeer();
-  const sessionId = cryptoId();
-
-  pc.onicecandidate = event => {
-    if (event.candidate) {
-      push(ref(db, `${roomPath}/webrtc/callerCandidates`), event.candidate.toJSON()).catch(console.warn);
-    }
-  };
-
-  const offer = await pc.createOffer();
-  offer.sdp = preferHiFiOpus(offer.sdp);
-  await pc.setLocalDescription(offer);
-  await set(ref(db, `${roomPath}/webrtc/offer`), {
-    sessionId,
-    type: offer.type,
-    sdp: offer.sdp
-  });
-
-  listen(ref(db, `${roomPath}/webrtc/answer`), async snapshot => {
-    const answer = snapshot.val();
-    if (!answer || !pc || pc !== peer) return;
-    if (pc.signalingState !== "have-local-offer") return;
-    try {
-      await pc.setRemoteDescription(new RTCSessionDescription(answer));
-    } catch (error) {
-      console.warn("No se pudo aplicar la respuesta", error);
-    }
-  });
-
-  listen(query(ref(db, `${roomPath}/webrtc/calleeCandidates`), limitToLast(60)), null, async snap => {
-    if (!pc || pc !== peer) return;
-    try {
-      await pc.addIceCandidate(new RTCIceCandidate(snap.val()));
-    } catch (error) {
-      console.warn("Candidato inválido", error);
-    }
-  });
-}
-
-// Estudiante = quien contesta: espera la oferta del docente.
-function listenForOffer() {
-  let answeredSession = null;
-
-  listen(ref(db, `${roomPath}/webrtc/offer`), async snapshot => {
-    const offer = snapshot.val();
-    if (!offer || !offer.sdp || offer.sessionId === answeredSession) return;
-    answeredSession = offer.sessionId;
-
-    const pc = createPeer();
-
-    pc.onicecandidate = event => {
-      if (event.candidate) {
-        push(ref(db, `${roomPath}/webrtc/calleeCandidates`), event.candidate.toJSON()).catch(console.warn);
-      }
-    };
-
-    try {
-      await pc.setRemoteDescription(new RTCSessionDescription({ type: offer.type, sdp: offer.sdp }));
-      const answer = await pc.createAnswer();
-      answer.sdp = preferHiFiOpus(answer.sdp);
-      await pc.setLocalDescription(answer);
-      await set(ref(db, `${roomPath}/webrtc/answer`), { type: answer.type, sdp: answer.sdp });
-      boostAudioBitrate();
-    } catch (error) {
-      console.error("No se pudo contestar la llamada", error);
-      return;
-    }
-
-    listen(query(ref(db, `${roomPath}/webrtc/callerCandidates`), limitToLast(60)), null, async snap => {
-      if (!pc || pc !== peer) return;
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(snap.val()));
-      } catch (error) {
-        console.warn("Candidato inválido", error);
-      }
-    });
-  });
-}
-
 /* ===== Optimización de audio =====
    Prioridad: sonido del instrumento perfecto, baja latencia y salida por altavoz. */
 
-let remoteAudioNode = null;
-let remoteStream = null;
 // Ruta del audio remoto. En celular el sistema decide altavoz/auricular según
 // CÓMO se reproduce: el elemento de video se trata como video-llamada (altavoz,
 // como FaceTime); Web Audio con el micrófono activo suele irse al auricular.
@@ -1025,31 +1236,29 @@ function isMobileDevice() {
     || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.userAgent)); // iPad con teclado
 }
 
-function routeRemoteAudioToSpeaker(stream) {
-  if (!stream || !stream.getAudioTracks().length) return;
-  remoteStream = stream;
-  applyAudioRoute();
-  applyIosSpeaker();
-}
-
-function applyAudioRoute() {
-  if (!remoteStream) return;
-  if (remoteAudioNode) { try { remoteAudioNode.disconnect(); } catch {} remoteAudioNode = null; }
+// Enruta el audio de UN participante según la ruta elegida.
+function routeEntryAudio(entry) {
+  if (!entry.stream || !entry.stream.getAudioTracks().length || !entry.videoEl) return;
+  if (entry.audioNode) { try { entry.audioNode.disconnect(); } catch {} entry.audioNode = null; }
 
   if (audioRoute === "webaudio") {
     try {
       const ctx = ensureAudio();
-      remoteAudioNode = ctx.createMediaStreamSource(remoteStream);
-      remoteAudioNode.connect(ctx.destination);
-      dom.remoteVideo.muted = true; // evita doble salida (Web Audio + elemento)
+      entry.audioNode = ctx.createMediaStreamSource(entry.stream);
+      entry.audioNode.connect(ctx.destination);
+      entry.videoEl.muted = true; // evita doble salida (Web Audio + elemento)
       return;
     } catch (error) {
       console.warn("No se pudo enrutar por Web Audio; uso el elemento de video", error);
     }
   }
 
-  dom.remoteVideo.muted = false;
-  dom.remoteVideo.play().catch(() => {});
+  entry.videoEl.muted = false;
+  entry.videoEl.play().catch(() => {});
+}
+
+function applyAudioRoute() {
+  peers.forEach(routeEntryAudio);
 }
 
 // Restricciones del micrófono según el modo. Aun en modo voz apagamos la
@@ -1124,7 +1333,11 @@ async function cycleAudioOutput() {
     const sinkId = device.deviceId === "default" ? "" : device.deviceId;
 
     if (canSink) await ensureAudio().setSinkId(sinkId);
-    if (canSinkVideo) await dom.remoteVideo.setSinkId(sinkId).catch(() => {});
+    if (canSinkVideo) {
+      for (const { videoEl } of peers.values()) {
+        if (videoEl) await videoEl.setSinkId(sinkId).catch(() => {});
+      }
+    }
 
     toast(`🔊 Salida: ${device.label || "salida " + (audioOutputIndex + 1)}`);
   } catch (error) {
@@ -1134,9 +1347,9 @@ async function cycleAudioOutput() {
 }
 
 // Reduce el búfer anti-jitter al mínimo: menos latencia para tocar en tiempo real.
-function tuneAudioLatency() {
-  if (!peer) return;
-  peer.getReceivers().forEach(receiver => {
+function tuneAudioLatency(pc) {
+  if (!pc) return;
+  pc.getReceivers().forEach(receiver => {
     if (receiver.track?.kind !== "audio") return;
     try { receiver.jitterBufferTarget = 0; } catch {}
     try { receiver.playoutDelayHint = 0; } catch {} // navegadores antiguos
@@ -1144,8 +1357,8 @@ function tuneAudioLatency() {
 }
 
 // Sube el bitrate del audio que enviamos para que el instrumento llegue con detalle.
-async function boostAudioBitrate() {
-  const sender = peer?.getSenders().find(s => s.track?.kind === "audio");
+async function boostAudioBitrate(pc) {
+  const sender = pc?.getSenders().find(s => s.track?.kind === "audio");
   if (!sender) return;
   try {
     const params = sender.getParameters();
@@ -2625,8 +2838,11 @@ async function toggleMusicMode() {
     }
     localStream?.addTrack(newTrack);
 
-    const sender = peer?.getSenders().find(s => s.track?.kind === "audio");
-    if (sender) await sender.replaceTrack(newTrack);
+    if (musicMixer) {
+      refreshMixerMic(); // la mezcla con la música sigue siendo el track enviado
+    } else {
+      forEachSender("audio", sender => sender.replaceTrack(newTrack).catch(console.warn));
+    }
 
     localStorage.setItem("musiaula-music-mode", musicMode ? "1" : "0");
     toast(musicMode
@@ -2654,31 +2870,39 @@ function stopStats() {
 let lastBytes = { sent: 0, received: 0, at: 0 };
 
 async function updateStats() {
-  if (!peer) {
+  if (!peers.size) {
     dom.statsPanel.innerHTML = "Sin conexión de video activa.";
     return;
   }
 
   try {
-    const stats = await peer.getStats();
+    // Con varias conexiones se muestra el peor caso (latencia/jitter más
+    // altos) y la suma de tráfico: lo que importa para diagnosticar.
     let rtt = null, jitter = null, packetsLost = 0, packetsReceived = 0;
     let bytesSent = 0, bytesReceived = 0, audioLevel = null;
 
-    stats.forEach(report => {
-      if (report.type === "candidate-pair" && report.nominated && report.currentRoundTripTime != null) {
-        rtt = report.currentRoundTripTime * 1000;
-      }
-      if (report.type === "inbound-rtp") {
-        packetsLost += report.packetsLost || 0;
-        packetsReceived += report.packetsReceived || 0;
-        if (report.kind === "audio" && report.jitter != null) jitter = report.jitter * 1000;
-        bytesReceived += report.bytesReceived || 0;
-      }
-      if (report.type === "outbound-rtp") bytesSent += report.bytesSent || 0;
-      if (report.type === "media-source" && report.kind === "audio" && report.audioLevel != null) {
-        audioLevel = report.audioLevel;
-      }
-    });
+    for (const { pc } of peers.values()) {
+      const stats = await pc.getStats();
+      stats.forEach(report => {
+        if (report.type === "candidate-pair" && report.nominated && report.currentRoundTripTime != null) {
+          const value = report.currentRoundTripTime * 1000;
+          rtt = rtt == null ? value : Math.max(rtt, value);
+        }
+        if (report.type === "inbound-rtp") {
+          packetsLost += report.packetsLost || 0;
+          packetsReceived += report.packetsReceived || 0;
+          if (report.kind === "audio" && report.jitter != null) {
+            const value = report.jitter * 1000;
+            jitter = jitter == null ? value : Math.max(jitter, value);
+          }
+          bytesReceived += report.bytesReceived || 0;
+        }
+        if (report.type === "outbound-rtp") bytesSent += report.bytesSent || 0;
+        if (report.type === "media-source" && report.kind === "audio" && report.audioLevel != null) {
+          audioLevel = report.audioLevel;
+        }
+      });
+    }
 
     const now = Date.now();
     let upKbps = 0, downKbps = 0;

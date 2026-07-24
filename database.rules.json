@@ -28,6 +28,10 @@
           ".validate": true
         },
 
+        "signals": {
+          ".validate": true
+        },
+
         "pulseTaps": {
           ".validate": true
         }
