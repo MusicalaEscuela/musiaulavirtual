@@ -290,6 +290,11 @@ function setupEvents() {
   document.addEventListener("pointerdown", resumeAudio);
   document.addEventListener("touchstart", resumeAudio, { passive: true });
 
+  // Al volver a la pestaña, el sistema ya soltó el wake lock: lo pedimos de nuevo.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && localStream) keepScreenAwake();
+  });
+
   dom.joinForm.addEventListener("submit", event => {
     event.preventDefault();
     enterClass({
@@ -917,7 +922,31 @@ function leaveClass() {
    candidatos. Para evitar choques, en cada pareja siempre inicia la
    conexión el participante con id menor. */
 
+/* ===== Pantalla siempre encendida =====
+   Mientras se está en clase pedimos un "wake lock" para que el celular o el
+   computador no apaguen la pantalla por inactividad. El sistema lo suelta solo
+   si la pestaña pasa a segundo plano, así que lo volvemos a pedir al regresar. */
+
+let wakeLock = null;
+
+async function keepScreenAwake() {
+  if (!("wakeLock" in navigator) || wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => { wakeLock = null; });
+  } catch (error) {
+    // Suele fallar si la batería está muy baja o la pestaña no está visible.
+    console.warn("No se pudo mantener la pantalla encendida", error);
+  }
+}
+
+function releaseScreenAwake() {
+  wakeLock?.release().catch(() => {});
+  wakeLock = null;
+}
+
 async function ensureLocalMedia() {
+  keepScreenAwake();
   if (localStream) return;
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
@@ -1136,6 +1165,7 @@ function forEachSender(kind, fn) {
 }
 
 function hangUp() {
+  releaseScreenAwake();
   stopScreenShare(true);
   closeAllPeers();
   localStream?.getTracks().forEach(track => track.stop());
