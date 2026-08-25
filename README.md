@@ -5,11 +5,10 @@ Prototipo web para probar una **clase virtual Musicala 1 a 1** con:
 - videollamada propia (WebRTC, sin Jitsi ni iframes externos);
 - escenario interactivo controlado por el docente: nota gigante, secuencia animada, juego "¿qué nota sigue?" y celebración;
 - sala compartida por nombre;
-- panel de objetivo de clase y recursos activables;
+- recursos activables;
 - ejercicio de secuencia de notas naturales;
 - respuestas rápidas del estudiante (le llegan al docente en vivo);
-- metrónomo local;
-- bitácora local exportable;
+- metrónomo sincronizado entre todos los dispositivos (reloj del servidor);
 - sincronización en tiempo real con **Firebase Realtime Database** (estado del aula + señalización del video).
 
 ---
@@ -18,22 +17,9 @@ Prototipo web para probar una **clase virtual Musicala 1 a 1** con:
 
 1. En la [consola de Firebase](https://console.firebase.google.com) abre el proyecto `musiaula-virtual`.
 2. **Compilación → Realtime Database → Crear base de datos** (si no existe). Copia la URL que aparece (algo como `https://musiaula-virtual-default-rtdb.firebaseio.com`) y verifica que coincida con `databaseURL` en `firebase-config.js`.
-3. En la pestaña **Reglas**, pega esto (modo prueba, solo para el prototipo):
-
-```json
-{
-  "rules": {
-    "rooms": {
-      ".read": true,
-      ".write": true
-    }
-  }
-}
-```
+3. En la pestaña **Reglas**, pega el contenido de `database.rules.json` (exigen sesión iniciada: `auth != null`).
 
 4. Publica las reglas.
-
-> ⚠️ Estas reglas son abiertas: cualquiera con la URL puede leer/escribir en `rooms/`. Para el prototipo está bien; antes de usarlo con estudiantes reales hay que agregar Firebase Auth y reglas por rol.
 
 ---
 
@@ -70,18 +56,15 @@ El estudiante solo ve el aula y el escenario: no tiene controles de edición.
 ## Limitaciones de esta versión
 
 - Pensada para clases **1 a 1** (un docente + un estudiante). Más participantes requieren un SFU (LiveKit, etc.).
-- Sin TURN: en redes muy restrictivas (colegios, algunas redes móviles) el video puede no conectar (~10-20% de los casos). Solución futura: servidor TURN barato o de plan gratuito.
-- Reglas de base de datos abiertas (ver arriba) y el rol es un select, no autenticación real.
-- La bitácora queda local en cada navegador.
-- El metrónomo no queda sincronizado entre dispositivos.
+- TURN de respaldo activo (Metered, plan gratuito de 0,5 GB/mes): si se agota la cuota, las redes muy restrictivas vuelven a fallar.
+- El rol se elige en el lobby; solo el rol docente se valida contra el Hub de docentes.
 
 ---
 
 ## Siguiente fase recomendada
 
 - Firebase Auth con roles reales (docente/estudiante/acudiente);
-- Firestore para clases, recursos y bitácoras persistentes;
+- Firestore para clases y recursos persistentes;
 - Storage para PDFs, imágenes y audios;
-- servidor TURN de respaldo;
 - salas creadas desde agenda y acceso por clase/usuario;
 - seguimiento conectado al ecosistema Musicala.

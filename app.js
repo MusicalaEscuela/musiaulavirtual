@@ -111,13 +111,11 @@ let appState = {
   displayName: "",
   role: "docente",
   classMode: "musica", // "musica" | "danza": cambia herramientas y prioridad de audio
-  objective: "",
   activeResource: null,
   activeExercise: null,
   stage: null,
   resources: defaultResources,
-  responses: [],
-  logs: []
+  responses: []
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -258,15 +256,13 @@ function bindDom() {
     "toast", "lobby", "app", "joinForm", "displayName", "role", "classMode", "roomName", "randomRoom",
     "btnShareMusic", "danceMusicVol",
     "copyLobbyLink", "roomTitle", "connectionStatus", "copyClassLink",
-    "leaveClass", "objectiveInput", "publishObjective", "objectiveView",
-    "activeResourceTitle", "activeResourceDesc", "activeExerciseTitle", "activeExerciseBody",
+    "leaveClass", "activeResourceTitle", "activeResourceDesc", "activeExerciseTitle", "activeExerciseBody",
     "responsesList", "resourceList", "addResource", "resourceTitle", "resourceDesc",
     "createResource", "rootNote", "exerciseMode", "scalePreview", "previewScale",
-    "launchScale", "bpm", "toggleMetronome", "beatIndicator", "workedOn", "progress",
-    "homework", "saveLog", "exportLog", "clearLocal", "classLogList", "sendState",
+    "launchScale", "bpm", "toggleMetronome", "beatIndicator", "sendState",
     "stageArea", "stageNote", "btnStageNote", "btnStageSeq", "btnStageQuiz",
     "btnStagePulse", "btnStageCelebrate", "btnStageClear",
-    "btnStagePiano", "btnStageGuitar", "btnStageViolin", "btnStageDrums",
+    "btnStagePiano", "btnStageGuitar", "btnStageBass", "btnStageViolin", "btnStageDrums",
     "btnStageSimon", "btnStageEar", "btnStageMatch", "btnStageCountdown",
     "videoArea", "videoGrid", "remotePlaceholder", "localVideo",
     "toggleMic", "toggleCam", "toggleMusicMode", "toggleSpeaker", "toggleStats", "statsPanel", "reconnectVideo", "reloadClass",
@@ -316,14 +312,6 @@ function setupEvents() {
 
   dom.tabs.forEach(tab => {
     tab.addEventListener("click", () => activateTab(tab.dataset.tab));
-  });
-
-  dom.publishObjective.addEventListener("click", () => {
-    appState.objective = dom.objectiveInput.value.trim();
-    saveLocal();
-    renderAula();
-    syncPatch({ objective: appState.objective });
-    toast("Objetivo publicado.");
   });
 
   dom.sendState.addEventListener("click", () => {
@@ -406,36 +394,10 @@ function setupEvents() {
     dom.chatInput.focus();
   });
 
-  dom.saveLog.addEventListener("click", () => {
-    const log = {
-      id: cryptoId(),
-      at: new Date().toISOString(),
-      room: appState.room,
-      workedOn: dom.workedOn.value.trim(),
-      progress: dom.progress.value.trim(),
-      homework: dom.homework.value.trim()
-    };
-
-    if (!log.workedOn && !log.progress && !log.homework) {
-      toast("Escribe algo en la bitácora. Una bitácora vacía es básicamente decoración.");
-      return;
-    }
-
-    appState.logs.unshift(log);
-    dom.workedOn.value = "";
-    dom.progress.value = "";
-    dom.homework.value = "";
-    saveLocal();
-    renderLogs();
-    toast("Entrada guardada localmente.");
-  });
-
-  dom.exportLog.addEventListener("click", exportJson);
-  dom.clearLocal.addEventListener("click", clearLocalData);
-
   dom.btnStageNote.addEventListener("click", () => {
-    launchStage({ kind: "bigNote", note: dom.stageNote.value });
-    toast("Nota gigante en pantalla de todos.");
+    const note = resolveStageNote(dom.stageNote.value);
+    launchStage({ kind: "bigNote", note });
+    toast(`Nota gigante en pantalla de todos: ${note}.`);
   });
 
   dom.btnStageSeq.addEventListener("click", () => {
@@ -485,6 +447,11 @@ function setupEvents() {
   dom.btnStageGuitar.addEventListener("click", () => {
     launchStage({ kind: "instrument", instrument: "guitar", title: "Guitarra 🎸" });
     toast("Diagrama de guitarra lanzado. Toca las cuerdas y trastes.");
+  });
+
+  dom.btnStageBass.addEventListener("click", () => {
+    launchStage({ kind: "instrument", instrument: "bass", title: "Bajo 🎸" });
+    toast("Diapasón de bajo lanzado. Toca las cuerdas y trastes.");
   });
 
   dom.btnStageViolin.addEventListener("click", () => {
@@ -847,7 +814,6 @@ function publicState() {
   return {
     room: appState.room,
     classMode: appState.classMode || "musica",
-    objective: appState.objective || "",
     activeResource: appState.activeResource,
     activeExercise: appState.activeExercise,
     stage: appState.stage,
@@ -857,7 +823,7 @@ function publicState() {
 }
 
 function mergeState(incoming) {
-  const allowed = ["classMode", "objective", "activeResource", "activeExercise", "stage", "resources"];
+  const allowed = ["classMode", "activeResource", "activeExercise", "stage", "resources"];
   let stageChanged = false;
 
   allowed.forEach(key => {
@@ -1148,7 +1114,10 @@ function closeAllPeers() {
 
 // Botón ↻: tumba todas las conexiones y las vuelve a levantar. A las parejas
 // donde inicia el otro se les pide la reconexión con una señal "reoffer".
-function reconnectAllPeers() {
+async function reconnectAllPeers() {
+  // Si la cámara/micrófono se negaron o fallaron al entrar, este es el momento
+  // de volver a pedirlos: así las conexiones nuevas ya salen con mis tracks.
+  await ensureLocalMedia();
   closeAllPeers();
   syncPeers();
   Object.keys(lastParticipants).forEach(id => {
@@ -1559,13 +1528,9 @@ function renderAll() {
   renderResources();
   renderScalePreview();
   renderResponses();
-  renderLogs();
 }
 
 function renderAula() {
-  dom.objectiveInput.value = appState.objective || dom.objectiveInput.value || "";
-  dom.objectiveView.textContent = appState.objective || "Sin objetivo publicado todavía";
-
   if (appState.activeResource) {
     const resource = appState.activeResource;
     const url = safeUrl(resource.url);
@@ -1805,6 +1770,22 @@ function renderPulseStage(stage, isTeacher) {
    los ve, los escucha y juega. El sonido se sintetiza en el navegador. */
 
 const PITCH_NAMES = ["Do", "Do#", "Re", "Re#", "Mi", "Fa", "Fa#", "Sol", "Sol#", "La", "La#", "Si"];
+
+/* Nota gigante: el select puede traer una nota fija o pedir una al azar.
+   Se resuelve en el momento de lanzarla, así cada clic saca una nota nueva
+   y sirve para hacer ronda de reconocimiento sin volver a elegir. */
+let lastRandomNote = null;
+
+function resolveStageNote(value) {
+  if (value !== "random-diatonic" && value !== "random-chromatic") return value;
+
+  const pool = value === "random-chromatic" ? PITCH_NAMES : NOTES;
+  // Evita repetir la nota anterior: sale una distinta y el ejercicio no se
+  // estanca en la misma nota dos veces seguidas.
+  const options = pool.length > 1 ? pool.filter(n => n !== lastRandomNote) : pool;
+  lastRandomNote = options[Math.floor(Math.random() * options.length)];
+  return lastRandomNote;
+}
 function noteNameFromMidi(midi) { return PITCH_NAMES[((midi % 12) + 12) % 12]; }
 
 let gameTimers = [];
@@ -1814,7 +1795,7 @@ function clearGameTimers() { gameTimers.forEach(clearTimeout); gameTimers = []; 
 function renderInstrumentStage(stage, isTeacher, closeButton) {
   if (stage.instrument === "piano") return renderPiano(stage, closeButton);
   if (stage.instrument === "drums") return renderDrums(stage, closeButton);
-  return renderFretboard(stage, closeButton); // guitarra y violín
+  return renderFretboard(stage, closeButton); // guitarra, bajo y violín
 }
 
 function renderPiano(stage, closeButton) {
@@ -1844,24 +1825,53 @@ function renderPiano(stage, closeButton) {
   });
 }
 
+// Instrumentos de cuerda: mismo diapasón, distinta afinación y timbre.
+// Las cuerdas van de la más aguda (arriba) a la más grave (abajo), como se
+// ven en un diagrama real.
+const FRETBOARDS = {
+  guitar: {
+    label: "Diagrama",
+    colLabel: "Traste",
+    strings: [
+      { name: "Mi", midi: 64 }, { name: "Si", midi: 59 }, { name: "Sol", midi: 55 },
+      { name: "Re", midi: 50 }, { name: "La", midi: 45 }, { name: "Mi", midi: 40 }
+    ],
+    // Timbre cálido y corto, como una cuerda pulsada.
+    opts: { type: "triangle", dur: 0.8 }
+  },
+  bass: {
+    label: "Bajo",
+    colLabel: "Traste",
+    // Afinación estándar de bajo de 4 cuerdas: Sol2 Re2 La1 Mi1.
+    strings: [
+      { name: "Sol", midi: 43 }, { name: "Re", midi: 38 },
+      { name: "La", midi: 33 }, { name: "Mi", midi: 28 }
+    ],
+    // En este registro tan grave un triángulo casi no se oye en parlantes de
+    // portátil o celular: la sierra y algo más de volumen y sustain lo rescatan.
+    opts: { type: "sawtooth", dur: 1.4, gain: 0.24 }
+  },
+  violin: {
+    label: "Diagrama",
+    colLabel: "Posición",
+    strings: [
+      { name: "Mi", midi: 76 }, { name: "La", midi: 69 },
+      { name: "Re", midi: 62 }, { name: "Sol", midi: 55 }
+    ],
+    opts: { type: "sawtooth", dur: 1.1 }
+  }
+};
+
 function renderFretboard(stage, closeButton) {
-  const guitar = [
-    { name: "Mi", midi: 64 }, { name: "Si", midi: 59 }, { name: "Sol", midi: 55 },
-    { name: "Re", midi: 50 }, { name: "La", midi: 45 }, { name: "Mi", midi: 40 }
-  ];
-  const violin = [
-    { name: "Mi", midi: 76 }, { name: "La", midi: 69 }, { name: "Re", midi: 62 }, { name: "Sol", midi: 55 }
-  ];
-  const isViolin = stage.instrument === "violin";
-  const strings = isViolin ? violin : guitar;
+  const config = FRETBOARDS[stage.instrument] || FRETBOARDS.guitar;
+  const { strings, colLabel, opts } = config;
   const cols = 5; // trastes/posiciones 0..4
-  const colLabel = isViolin ? "Posición" : "Traste";
 
   dom.stageArea.innerHTML = `
     ${closeButton}
-    <p class="label">${escapeHtml(stage.title || "Diagrama")}</p>
+    <p class="label">${escapeHtml(stage.title || config.label)}</p>
     <p class="hint">Cada cuerda al aire (${colLabel.toLowerCase()} 0) y sus notas. Toca cualquier punto para escucharlo.</p>
-    <div class="fretboard ${isViolin ? "violin" : "guitar"}">
+    <div class="fretboard ${stage.instrument === "violin" ? "violin" : stage.instrument === "bass" ? "bass" : "guitar"}">
       <div class="fret-head"><span></span>${Array.from({ length: cols }, (_, c) => `<span class="fret-num">${c}</span>`).join("")}</div>
       ${strings.map((str, si) => `
         <div class="fret-row">
@@ -1874,7 +1884,6 @@ function renderFretboard(stage, closeButton) {
       `).join("")}
     </div>
   `;
-  const opts = { type: isViolin ? "sawtooth" : "triangle", dur: isViolin ? 1.1 : 0.8 };
   dom.stageArea.querySelectorAll(".fret-cell").forEach(cell => {
     cell.addEventListener("pointerdown", () => {
       playAndEmit(cell.dataset.playId, { midi: Number(cell.dataset.midi), opts }, cell);
@@ -2694,23 +2703,6 @@ function formatTime(value) {
   }
 }
 
-function renderLogs() {
-  if (!appState.logs.length) {
-    dom.classLogList.className = "log-list empty";
-    dom.classLogList.textContent = "Aún no hay registros.";
-    return;
-  }
-
-  dom.classLogList.className = "log-list";
-  dom.classLogList.innerHTML = appState.logs.slice(0, 12).map(log => `
-    <article class="log-item">
-      <strong>${formatDate(log.at)}</strong>
-      ${log.workedOn ? `<p><strong>Trabajado:</strong> ${escapeHtml(log.workedOn)}</p>` : ""}
-      ${log.progress ? `<p><strong>Avance:</strong> ${escapeHtml(log.progress)}</p>` : ""}
-      ${log.homework ? `<p><strong>Tarea:</strong> ${escapeHtml(log.homework)}</p>` : ""}
-    </article>
-  `).join("");
-}
 
 /* ===== Metrónomo sincronizado =====
    El docente publica { bpm, meter, startAt } con hora del servidor.
@@ -2961,37 +2953,6 @@ async function updateStats() {
   }
 }
 
-function exportJson() {
-  const data = {
-    exportedAt: new Date().toISOString(),
-    state: appState
-  };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `musiaula-${appState.room || "clase"}-${new Date().toISOString().slice(0, 10)}.json`;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
-
-function clearLocalData() {
-  localStorage.removeItem(STORAGE_KEY);
-  appState = {
-    ...appState,
-    objective: "",
-    activeResource: null,
-    activeExercise: null,
-    stage: null,
-    resources: defaultResources,
-    responses: [],
-    logs: []
-  };
-  saveLocal();
-  renderAll();
-  toast("Datos locales limpiados.");
-}
-
 function saveLocal() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     ...appState,
@@ -3009,8 +2970,7 @@ function loadLocal() {
       ...parsed,
       stage: null,
       resources: Array.isArray(parsed.resources) && parsed.resources.length ? parsed.resources : defaultResources,
-      responses: Array.isArray(parsed.responses) ? parsed.responses : [],
-      logs: Array.isArray(parsed.logs) ? parsed.logs : []
+      responses: Array.isArray(parsed.responses) ? parsed.responses : []
     };
   } catch (error) {
     console.warn("No se pudo cargar localStorage", error);

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MusiAula Virtual · Musicala</title>
-  <meta name="description" content="Aula virtual de Musicala para clases de música 1 a 1: video propio, metrónomo sincronizado, ejercicios interactivos y bitácora." />
+  <meta name="description" content="Aula virtual de Musicala para clases de música 1 a 1: video propio, metrónomo sincronizado, ejercicios interactivos." />
   <link rel="icon" type="image/png" href="./logo.png" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
@@ -54,7 +54,7 @@
       <div>
         <p class="eyebrow">Aula virtual de Musicala</p>
         <h1>MusiAula Virtual</h1>
-        <p class="subtitle">Clases de música y baile, 1 a 1 o en grupo pequeño, con video propio, metrónomo sincronizado, ejercicios interactivos y bitácora.</p>
+        <p class="subtitle">Clases de música y baile, 1 a 1 o en grupo pequeño, con video propio, metrónomo sincronizado, ejercicios interactivos.</p>
       </div>
     </div>
 
@@ -115,7 +115,7 @@
           <li>Modo música: audio sin filtros de voz para escuchar el instrumento real.</li>
           <li>Modo baile 💃: prioridad al audio, música de fondo compartida desde una pestaña (YouTube, Spotify) mezclada con la voz del profe.</li>
           <li>Panel de diagnóstico de conexión (latencia, jitter, pérdida de paquetes).</li>
-          <li>Escenario interactivo, generador de escalas, respuestas rápidas y bitácora.</li>
+          <li>Escenario interactivo, generador de escalas y respuestas rápidas.</li>
         </ul>
         <div class="warning">
           <strong>Importante:</strong> funciona 1 a 1 y en grupos pequeños (hasta ~5 personas; cada participante extra consume más internet de todos). Para escuchar bien el metrónomo y el instrumento, usa <strong>audífonos</strong>.
@@ -173,7 +173,6 @@
           <button class="tab teacher-only" data-tab="tab-escenario">Escenario</button>
           <button class="tab teacher-only" data-tab="tab-recursos">Recursos</button>
           <button class="tab teacher-only" data-tab="tab-ejercicio">Ejercicio</button>
-          <button class="tab teacher-only" data-tab="tab-bitacora">Bitácora</button>
         </nav>
 
         <section id="tab-escenario" class="tab-content">
@@ -195,7 +194,10 @@
             <label>
               Nota
               <select id="stageNote">
-                <option>Do</option>
+                <option value="random-diatonic">🎲 Al azar (diatónico)</option>
+                <option value="random-chromatic">🎲 Al azar (cromático)</option>
+                <option disabled>──────────</option>
+                <option selected>Do</option>
                 <option>Re</option>
                 <option>Mi</option>
                 <option>Fa</option>
@@ -231,6 +233,7 @@
             <div class="actions wrap">
               <button id="btnStagePiano" class="primary tiny">🎹 Piano</button>
               <button id="btnStageGuitar" class="primary tiny">🎸 Guitarra</button>
+              <button id="btnStageBass" class="primary tiny">🎸 Bajo</button>
               <button id="btnStageViolin" class="primary tiny">🎻 Violín</button>
               <button id="btnStageDrums" class="primary tiny">🥁 Batería</button>
             </div>
@@ -257,17 +260,6 @@
           <div class="section-head">
             <h2>Clase activa</h2>
             <button id="sendState" class="tiny teacher-only">Sincronizar ahora</button>
-          </div>
-
-          <label class="teacher-only">
-            Objetivo de la clase
-            <textarea id="objectiveInput" rows="3" placeholder="Ej: Reconocer la secuencia de notas desde Re y cantar el patrón ascendente."></textarea>
-          </label>
-          <button id="publishObjective" class="primary full teacher-only">Publicar objetivo</button>
-
-          <div class="live-card">
-            <p class="label">Objetivo visible</p>
-            <h3 id="objectiveView">Sin objetivo publicado todavía</h3>
           </div>
 
           <div class="live-card">
@@ -407,38 +399,10 @@
 
           <p class="hint">Suena en <strong>ambos</strong> dispositivos al mismo tiempo (sincronizado con el reloj del servidor). Cada lado lo genera localmente, así que no le afecta la latencia del video.</p>
         </section>
-
-        <section id="tab-bitacora" class="tab-content">
-          <h2>Bitácora de clase</h2>
-
-          <label>
-            Lo trabajado
-            <textarea id="workedOn" rows="3" placeholder="Ej: Secuencia desde Re, lectura rítmica básica, respiración..."></textarea>
-          </label>
-          <label>
-            Avance observado
-            <textarea id="progress" rows="3" placeholder="Ej: Identifica mejor el orden de notas, pero se confunde al volver a Do."></textarea>
-          </label>
-          <label>
-            Tarea
-            <textarea id="homework" rows="3" placeholder="Ej: Practicar 5 minutos diarios secuencia desde Do, Re y Sol."></textarea>
-          </label>
-
-          <div class="actions wrap">
-            <button id="saveLog" class="primary">Guardar entrada</button>
-            <button id="exportLog" class="secondary">Exportar JSON</button>
-            <button id="clearLocal" class="ghost">Limpiar local</button>
-          </div>
-
-          <div>
-            <p class="label">Historial local</p>
-            <div id="classLogList" class="log-list empty">Aún no hay registros.</div>
-          </div>
-        </section>
       </aside>
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=13"></script>
+  <script type="module" src="./app.js?v=18"></script>
 </body>
 </html>
