@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="./logo.png" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=8" />
+  <link rel="stylesheet" href="./styles.css?v=12" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -135,6 +135,7 @@
         </div>
       </div>
       <div class="top-actions">
+        <span id="audioModeChip" class="status audio-chip">🎤 Modo voz</span>
         <span id="metroChip" class="status metro-chip hidden">♩ Metrónomo</span>
         <span id="connectionStatus" class="status offline">Preparando aula</span>
         <button id="copyClassLink" class="secondary">Copiar enlace</button>
@@ -154,18 +155,26 @@
           </div>
           <video id="localVideo" autoplay playsinline muted></video>
           <div id="statsPanel" class="stats-panel hidden"></div>
+          <div id="micBoostBar" class="mic-boost hidden">
+            <label for="micBoost">🎚️ Volumen de tu instrumento</label>
+            <input id="micBoost" type="range" min="1" max="6" step="0.5" value="1" />
+            <span id="micBoostValue">×1</span>
+          </div>
           <div class="video-controls">
             <button id="toggleMic" class="vc-btn" title="Silenciar micrófono">🎙️</button>
             <button id="toggleCam" class="vc-btn" title="Apagar cámara">📷</button>
             <button id="toggleMusicMode" class="vc-btn" title="Modo música: audio sin filtros de voz (usa audífonos)">🎼</button>
             <button id="toggleSpeaker" class="vc-btn" title="Salida de audio: altavoz o auricular">🔊</button>
             <button id="shareScreen" class="vc-btn teacher-only" title="Compartir pantalla (tu cámara vuelve al terminar)">🖥️</button>
+            <button id="shareAudioOnly" class="vc-btn teacher-only" title="Compartir SOLO el audio de una pestaña (tu cámara sigue enviándose)">🔈</button>
             <button id="toggleStats" class="vc-btn" title="Diagnóstico de conexión">📊</button>
             <button id="reconnectVideo" class="vc-btn teacher-only" title="Reintentar conexión de video">↻</button>
             <button id="reloadClass" class="vc-btn" title="Botón de emergencia: si la clase se traba, reconecta todo">🚑</button>
           </div>
         </div>
       </div>
+
+      <button id="focusToolsBtn" class="focus-tools-btn" title="Abrir las herramientas de clase sin cerrar el recurso">🧰 Herramientas</button>
 
       <aside class="tool-panel card">
         <nav class="tabs" aria-label="Herramientas de clase">
@@ -236,6 +245,7 @@
               <button id="btnStageBass" class="primary tiny">🎸 Bajo</button>
               <button id="btnStageViolin" class="primary tiny">🎻 Violín</button>
               <button id="btnStageDrums" class="primary tiny">🥁 Batería</button>
+              <button id="btnStageTuner" class="primary tiny">🎯 Afinador</button>
             </div>
           </div>
 
@@ -280,6 +290,11 @@
               <span id="metroStateText">Apagado</span>
               <span id="beatIndicatorAula" class="beat">●</span>
             </div>
+            <div id="beatDotsAula" class="beat-dots" aria-hidden="true"></div>
+            <label class="metro-vol">
+              🔉 Volumen del clic (en tu dispositivo)
+              <input id="metroVolume" type="range" min="0" max="1" step="0.05" value="0.55" />
+            </label>
           </div>
 
           <div>
@@ -396,6 +411,7 @@
             <button id="toggleMetronome" class="secondary">Iniciar</button>
             <span id="beatIndicator" class="beat">●</span>
           </div>
+          <div id="beatDots" class="beat-dots" aria-hidden="true"></div>
 
           <p class="hint">Suena en <strong>ambos</strong> dispositivos al mismo tiempo (sincronizado con el reloj del servidor). Cada lado lo genera localmente, así que no le afecta la latencia del video.</p>
         </section>
@@ -403,6 +419,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=18"></script>
+  <script type="module" src="./app.js?v=23"></script>
 </body>
 </html>

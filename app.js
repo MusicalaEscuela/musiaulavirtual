@@ -79,6 +79,16 @@ let screenStream = null;
 let micOn = true;
 let camOn = true;
 let musicMode = localStorage.getItem("musiaula-music-mode") === "1";
+// Ganancia de recuperación del micrófono. Sin los filtros de voz nada
+// amplifica el instrumento, y un bajo o una guitarra acústica entran muy
+// flojos: este control lo sube sin volver a meter el procesado que aplasta.
+let micBoost = Number(localStorage.getItem("musiaula-mic-boost")) || 1;
+let micChain = null; // { src, gain, dest } cuando el micrófono pasa por Web Audio
+// Volumen del clic del metrónomo. Es local a cada dispositivo: el estudiante
+// puede subirlo sin afectar al docente, que quizá ya lo oye bien.
+let metroVolume = localStorage.getItem("musiaula-metro-vol") !== null
+  ? Number(localStorage.getItem("musiaula-metro-vol"))
+  : 0.55;
 let speakerOn = true; // en móvil el audio debe salir por el altavoz, no por el auricular
 let audioOutputs = [];
 let audioOutputIndex = 0;
@@ -263,15 +273,18 @@ function bindDom() {
     "stageArea", "stageNote", "btnStageNote", "btnStageSeq", "btnStageQuiz",
     "btnStagePulse", "btnStageCelebrate", "btnStageClear",
     "btnStagePiano", "btnStageGuitar", "btnStageBass", "btnStageViolin", "btnStageDrums",
+    "btnStageTuner",
     "btnStageSimon", "btnStageEar", "btnStageMatch", "btnStageCountdown",
     "videoArea", "videoGrid", "remotePlaceholder", "localVideo",
-    "toggleMic", "toggleCam", "toggleMusicMode", "toggleSpeaker", "toggleStats", "statsPanel", "reconnectVideo", "reloadClass",
-    "shareScreen", "biblioRefresh", "biblioStatus", "biblioSearch", "biblioArea",
+    "toggleMic", "toggleCam", "toggleMusicMode", "toggleSpeaker", "audioModeChip",
+    "micBoostBar", "micBoost", "micBoostValue", "toggleStats", "statsPanel", "reconnectVideo", "reloadClass",
+    "shareScreen", "shareAudioOnly", "biblioRefresh", "biblioStatus", "biblioSearch", "biblioArea",
     "biblioCategoria", "biblioNivel", "biblioList", "biblioMore",
     "chatForm", "chatInput",
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
     "registerBtn", "resetPassword", "logoutBtn", "userBadge",
-    "metroChip", "metroStateText", "beatIndicatorAula", "meter"
+    "metroChip", "metroStateText", "beatIndicatorAula", "meter",
+    "metroVolume", "focusToolsBtn", "beatDots", "beatDotsAula"
   ].forEach(id => dom[id] = document.getElementById(id));
 
   dom.tabs = Array.from(document.querySelectorAll(".tab"));
@@ -454,6 +467,11 @@ function setupEvents() {
     toast("Diapasón de bajo lanzado. Toca las cuerdas y trastes.");
   });
 
+  dom.btnStageTuner.addEventListener("click", () => {
+    launchStage({ kind: "tuner", title: "Afinador 🎯" });
+    toast("Afinador en pantalla. Cada quien afina con SU propio micrófono.");
+  });
+
   dom.btnStageViolin.addEventListener("click", () => {
     launchStage({ kind: "instrument", instrument: "violin", title: "Violín 🎻" });
     toast("Diagrama de violín lanzado.");
@@ -501,8 +519,23 @@ function setupEvents() {
     dom.toggleCam.textContent = camOn ? "📷" : "🚫";
   });
 
+  dom.metroVolume.value = String(metroVolume);
+  dom.metroVolume.addEventListener("input", () => {
+    metroVolume = Number(dom.metroVolume.value);
+    localStorage.setItem("musiaula-metro-vol", String(metroVolume));
+    // Un clic de muestra para oír el cambio sin esperar al siguiente pulso.
+    try { clickAt(ensureAudio(), ensureAudio().currentTime + 0.01, false); } catch {}
+  });
+
+  dom.focusToolsBtn.addEventListener("click", () => {
+    document.body.classList.toggle("tools-open");
+  });
+
   dom.toggleMusicMode.addEventListener("click", toggleMusicMode);
-  dom.toggleMusicMode.classList.toggle("on", musicMode);
+  dom.micBoost.value = String(micBoost);
+  dom.micBoostValue.textContent = `×${micBoost}`;
+  dom.micBoost.addEventListener("input", () => setMicBoost(Number(dom.micBoost.value)));
+  renderAudioMode();
   dom.toggleSpeaker.addEventListener("click", cycleAudioOutput);
 
   dom.toggleStats.addEventListener("click", () => {
@@ -526,6 +559,7 @@ function setupEvents() {
   });
 
   dom.shareScreen.addEventListener("click", toggleScreenShare);
+  dom.shareAudioOnly.addEventListener("click", toggleAudioOnlyShare);
 
   // Modo baile: compartir música usa el mismo flujo de compartir pantalla,
   // pero pidiendo el audio de la pestaña (ver toggleScreenShare).
@@ -592,6 +626,91 @@ function applyClassMode(mode) {
   }
 }
 
+
+/* ===== Cadena del micrófono con ganancia =====
+   En modo instrumento el audio va sin ningún filtro, que es lo correcto para
+   la fidelidad pero deja el instrumento flojo: los filtros de voz eran los que
+   subían el volumen de paso. Aquí el micrófono pasa por Web Audio y se le
+   aplica una ganancia limpia, que sube el nivel sin comprimir ni recortar. */
+
+function buildMicChain() {
+  const micTrack = localStream?.getAudioTracks()[0];
+  if (!micTrack) return null;
+  try {
+    const ctx = ensureAudio();
+    const src = ctx.createMediaStreamSource(new MediaStream([micTrack]));
+    const gain = ctx.createGain();
+    gain.gain.value = micBoost;
+    const dest = ctx.createMediaStreamDestination();
+    src.connect(gain);
+    gain.connect(dest);
+    tagAudioAsMusic(dest.stream);
+    return { src, gain, dest };
+  } catch (error) {
+    console.warn("No se pudo crear la cadena del micrófono", error);
+    return null;
+  }
+}
+
+function destroyMicChain() {
+  try { micChain?.src.disconnect(); } catch {}
+  try { micChain?.gain.disconnect(); } catch {}
+  micChain = null;
+}
+
+// El track que realmente se envía a la clase, según lo que esté activo.
+function outgoingMicTrack() {
+  if (micChain) return micChain.dest.stream.getAudioTracks()[0];
+  return localStream?.getAudioTracks()[0] || null;
+}
+
+// Reconstruye la cadena (tras cambiar de modo o de micrófono) y reenvía.
+function applyMicChain() {
+  destroyMicChain();
+  // Solo hace falta cuando hay que amplificar: si no, se manda el track
+  // original, que es un camino más corto y con menos latencia.
+  if (musicMode && micBoost > 1) micChain = buildMicChain();
+
+  if (musicMixer) {
+    refreshMixerMic();
+    return;
+  }
+  const track = outgoingMicTrack();
+  if (track) forEachSender("audio", sender => sender.replaceTrack(track).catch(console.warn));
+}
+
+function setMicBoost(value) {
+  micBoost = value;
+  localStorage.setItem("musiaula-mic-boost", String(value));
+  if (dom.micBoostValue) dom.micBoostValue.textContent = `×${value}`;
+
+  // Si la cadena ya existe basta con mover la ganancia: cambiar el track en
+  // caliente cortaría el audio un instante.
+  if (micChain && value > 1) {
+    micChain.gain.gain.value = value;
+    if (musicMixer) musicMixer.micGain && (musicMixer.micGain.gain.value = value);
+    return;
+  }
+  applyMicChain();
+}
+
+// Deja claro en pantalla en qué modo está el audio: el botón solo se pintaba
+// de otro color y no se entendía cuál era cuál.
+function renderAudioMode() {
+  dom.toggleMusicMode?.classList.toggle("on", musicMode);
+  if (dom.toggleMusicMode) {
+    dom.toggleMusicMode.textContent = musicMode ? "🎼" : "🎤";
+    dom.toggleMusicMode.title = musicMode
+      ? "Modo instrumento: sin filtros, fiel al instrumento. Toca para volver a voz."
+      : "Modo voz: cancelación de eco encendida. Toca para pasar a instrumento.";
+  }
+  if (dom.audioModeChip) {
+    dom.audioModeChip.textContent = musicMode ? "🎼 Modo instrumento" : "🎤 Modo voz";
+    dom.audioModeChip.classList.toggle("music", musicMode);
+  }
+  dom.micBoostBar?.classList.toggle("hidden", !musicMode);
+}
+
 /* ===== Mezcla de música (modo baile) =====
    El audio de la pestaña compartida (YouTube, Spotify Web...) se mezcla con
    el micrófono en un solo track (Web Audio) y se envía por la llamada que ya
@@ -611,13 +730,17 @@ function startMusicMix(tabTrack) {
     gain.connect(dest);
 
     let micSrc = null;
+    let micGain = null;
     const micTrack = localStream?.getAudioTracks()[0];
     if (micTrack) {
       micSrc = ctx.createMediaStreamSource(new MediaStream([micTrack]));
-      micSrc.connect(dest);
+      micGain = ctx.createGain();
+      micGain.gain.value = musicMode ? micBoost : 1;
+      micSrc.connect(micGain);
+      micGain.connect(dest);
     }
 
-    musicMixer = { dest, micSrc, musicSrc, gain, tabTrack };
+    musicMixer = { dest, micSrc, micGain, musicSrc, gain, tabTrack };
 
     const mixedTrack = dest.stream.getAudioTracks()[0];
     forEachSender("audio", sender => sender.replaceTrack(mixedTrack).catch(console.warn));
@@ -632,10 +755,11 @@ function stopMusicMix() {
   if (!musicMixer) return;
   try { musicMixer.musicSrc.disconnect(); } catch {}
   try { musicMixer.micSrc?.disconnect(); } catch {}
+  try { musicMixer.micGain?.disconnect(); } catch {}
   musicMixer = null;
 
-  const micTrack = localStream?.getAudioTracks()[0];
-  if (micTrack) forEachSender("audio", sender => sender.replaceTrack(micTrack).catch(console.warn));
+  const track = outgoingMicTrack();
+  if (track) forEachSender("audio", sender => sender.replaceTrack(track).catch(console.warn));
 }
 
 // Si el micrófono cambia (modo música/voz) mientras hay mezcla activa,
@@ -1136,6 +1260,7 @@ function forEachSender(kind, fn) {
 function hangUp() {
   releaseScreenAwake();
   stopScreenShare(true);
+  stopAudioOnlyShare(true);
   closeAllPeers();
   localStream?.getTracks().forEach(track => track.stop());
   localStream = null;
@@ -1155,20 +1280,17 @@ async function toggleScreenShare() {
     return;
   }
 
-  // En modo baile se pide también el audio de la pestaña para mandar la música.
-  const wantMusic = appState.classMode === "danza";
-
   let stream;
   try {
     stream = await navigator.mediaDevices.getDisplayMedia({
-      // displaySurface "window" sugiere compartir UNA ventana (no toda la
-      // pantalla); en baile se sugiere "browser" (pestaña) porque solo las
-      // pestañas comparten audio. surfaceSwitching permite cambiar de ventana
-      // sin volver a compartir.
-      video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 }, displaySurface: wantMusic ? "browser" : "window" },
-      audio: wantMusic
-        ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-        : false,
+      // Se sugiere "browser" (pestaña) porque SOLO las pestañas pueden
+      // compartir audio: si se sugiere "window", el navegador ni siquiera
+      // muestra la casilla «Compartir audio». surfaceSwitching permite
+      // cambiar de ventana sin volver a compartir.
+      video: { frameRate: { ideal: 15, max: 30 }, width: { max: 1920 }, displaySurface: "browser" },
+      // Se pide siempre, en música y en baile: así la casilla aparece y el
+      // docente decide. Sin filtros de voz, que destrozan la música.
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       surfaceSwitching: "include",
       selfBrowserSurface: "exclude"
     });
@@ -1177,13 +1299,14 @@ async function toggleScreenShare() {
     return;
   }
 
+  stopAudioOnlyShare(true); // una sola mezcla de audio a la vez
   screenStream = stream;
   const screenTrack = stream.getVideoTracks()[0];
 
   const tabAudio = stream.getAudioTracks()[0];
   if (tabAudio) {
     startMusicMix(tabAudio);
-  } else if (wantMusic) {
+  } else if (appState.classMode === "danza") {
     toast("Consejo: elige una PESTAÑA y marca «Compartir audio» para que suene la música.");
   }
 
@@ -1201,6 +1324,68 @@ async function toggleScreenShare() {
   toast(sent
     ? "Compartiendo pantalla con la clase."
     : "Compartiendo pantalla. Se enviará cuando alguien se conecte.");
+}
+
+
+/* ===== Compartir solo el audio de una pestaña =====
+   Para poner un acompañamiento, una pista o un ejemplo sin robarle la
+   pantalla a la clase: la cámara del docente sigue enviándose y solo se
+   suma la música a su voz.
+
+   El navegador no ofrece un "compartir solo audio": hay que pedir video y
+   audio, y descartar el video en cuanto llega. Por eso el selector muestra
+   igual la vista previa de pestañas. */
+
+let audioOnlyStream = null;
+
+async function toggleAudioOnlyShare() {
+  if (audioOnlyStream) {
+    stopAudioOnlyShare();
+    return;
+  }
+
+  if (screenStream) {
+    toast("Ya estás compartiendo pantalla: detenla primero.");
+    return;
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: "browser" },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      selfBrowserSurface: "exclude"
+    });
+  } catch {
+    return;
+  }
+
+  const tabAudio = stream.getAudioTracks()[0];
+  if (!tabAudio) {
+    stream.getTracks().forEach(track => track.stop());
+    toast("Faltó marcar «Compartir audio de la pestaña». Elige una PESTAÑA y marca la casilla.");
+    return;
+  }
+
+  // El video se descarta: solo queríamos el audio.
+  stream.getVideoTracks().forEach(track => track.stop());
+
+  audioOnlyStream = stream;
+  startMusicMix(tabAudio);
+  dom.shareAudioOnly.classList.add("on");
+  dom.shareAudioOnly.textContent = "⏹";
+  tabAudio.onended = () => stopAudioOnlyShare();
+  toast("🔈 Compartiendo solo el audio. Tu cámara sigue en clase.");
+}
+
+function stopAudioOnlyShare(silent = false) {
+  if (!audioOnlyStream) return;
+  stopMusicMix();
+  audioOnlyStream.getTracks().forEach(track => track.stop());
+  audioOnlyStream = null;
+  dom.shareAudioOnly?.classList.remove("on");
+  if (dom.shareAudioOnly) dom.shareAudioOnly.textContent = "🔈";
+  if (!silent) toast("Dejaste de compartir el audio.");
 }
 
 function stopScreenShare(silent = false) {
@@ -1564,6 +1749,7 @@ function renderStage() {
   }
   clearGameTimers();
   clearAnnotations();
+  stopTuner();
 
   const stage = appState.stage;
   if (!stage) {
@@ -1648,6 +1834,7 @@ function renderStage() {
   if (stage.kind === "resource") renderResourceStage(stage, isTeacher, closeButton);
 
   if (stage.kind === "instrument") renderInstrumentStage(stage, isTeacher, closeButton);
+  if (stage.kind === "tuner") renderTunerStage(stage, closeButton);
   if (stage.kind === "simon") renderSimonStage(stage, isTeacher, closeButton);
   if (stage.kind === "earQuiz") renderEarQuizStage(stage, isTeacher, closeButton);
   if (stage.kind === "match") renderMatchStage(stage, isTeacher, closeButton);
@@ -1889,6 +2076,164 @@ function renderFretboard(stage, closeButton) {
       playAndEmit(cell.dataset.playId, { midi: Number(cell.dataset.midi), opts }, cell);
     });
   });
+}
+
+/* ===== Afinador cromático =====
+   Cada dispositivo analiza SU propio micrófono: el estudiante afina su
+   instrumento con el afinador de su celular, no con el del docente (mandar
+   el audio por la llamada lo volvería inútil, la compresión de voz destruye
+   justo la información de afinación que hace falta).
+
+   Detección por autocorrelación: se busca el desfase con el que la onda se
+   parece más a sí misma, y ese desfase es el periodo. Es lento comparado con
+   una FFT pero mucho más fiable en notas graves, que es justo donde vive el
+   bajo. */
+
+const A4 = 440;
+let tunerRAF = null;
+let tunerSource = null;
+
+function stopTuner() {
+  if (tunerRAF) cancelAnimationFrame(tunerRAF);
+  tunerRAF = null;
+  try { tunerSource?.disconnect(); } catch {}
+  tunerSource = null;
+}
+
+// Devuelve la frecuencia dominante en Hz, o null si no hay señal clara.
+function detectPitch(buf, sampleRate) {
+  const SIZE = buf.length;
+
+  // Volumen: por debajo de este umbral es silencio o ruido de fondo.
+  let rms = 0;
+  for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+  rms = Math.sqrt(rms / SIZE);
+  if (rms < 0.008) return null;
+
+  // Rango útil: de 30 Hz (por debajo del Mi grave del bajo) a 1200 Hz.
+  const maxLag = Math.floor(sampleRate / 30);
+  const minLag = Math.floor(sampleRate / 1200);
+
+  const corrAt = lag => {
+    let corr = 0;
+    for (let i = 0; i < SIZE - lag; i++) corr += buf[i] * buf[i + lag];
+    return corr / (SIZE - lag);
+  };
+
+  let bestLag = -1;
+  let bestCorr = 0;
+  let lastCorr = 1;
+
+  for (let lag = minLag; lag < maxLag; lag++) {
+    const corr = corrAt(lag);
+
+    // Nos quedamos con el primer pico claro, no con el más alto: así no
+    // confunde la nota con su octava o su quinta.
+    if (corr > 0.9 * rms * rms && corr > lastCorr && corr > bestCorr) {
+      bestCorr = corr;
+      bestLag = lag;
+    } else if (bestLag > 0 && corr < lastCorr) {
+      break;
+    }
+    lastCorr = corr;
+  }
+
+  if (bestLag <= 0) return null;
+
+  // El desfase se mide en samples enteros, y en notas graves un solo sample
+  // vale casi 10 cents (a 41 Hz el Mi del bajo marcaría desafinado estando
+  // perfecto). Ajustamos una parábola entre el pico y sus vecinos para leer
+  // el máximo real entre dos samples.
+  const prev = corrAt(bestLag - 1);
+  const next = corrAt(bestLag + 1);
+  const denom = 2 * (2 * bestCorr - prev - next);
+  const shift = denom !== 0 ? (next - prev) / denom : 0;
+
+  return sampleRate / (bestLag + shift);
+}
+
+function freqToNote(freq) {
+  // Semitonos de distancia respecto al La4, con decimales.
+  const semis = 12 * Math.log2(freq / A4);
+  const nearest = Math.round(semis);
+  const midi = 69 + nearest;
+  // Un semitono son 100 cents: la parte decimal es qué tan desafinado está.
+  const cents = Math.round((semis - nearest) * 100);
+  return { name: PITCH_NAMES[((midi % 12) + 12) % 12], octave: Math.floor(midi / 12) - 1, cents };
+}
+
+function renderTunerStage(stage, closeButton) {
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <p class="label">${escapeHtml(stage.title || "Afinador")}</p>
+    <div class="tuner">
+      <div class="tuner-note" data-tuner-note>--</div>
+      <div class="tuner-meter">
+        <div class="tuner-scale"><span>-50</span><span>♭</span><span class="center">0</span><span>♯</span><span>+50</span></div>
+        <div class="tuner-track">
+          <div class="tuner-zone"></div>
+          <div class="tuner-needle" data-tuner-needle></div>
+        </div>
+      </div>
+      <p class="tuner-cents" data-tuner-cents>Toca una nota sostenida</p>
+      <p class="hint">Usa el micrófono de ESTE dispositivo. Acércalo al instrumento y toca una sola cuerda.</p>
+    </div>
+  `;
+
+  const noteEl = dom.stageArea.querySelector("[data-tuner-note]");
+  const needleEl = dom.stageArea.querySelector("[data-tuner-needle]");
+  const centsEl = dom.stageArea.querySelector("[data-tuner-cents]");
+
+  if (!localStream?.getAudioTracks().length) {
+    centsEl.textContent = "Sin micrófono disponible en este dispositivo.";
+    return;
+  }
+
+  let ctx;
+  try {
+    ctx = ensureAudio();
+  } catch {
+    centsEl.textContent = "Este navegador no dejó abrir el audio.";
+    return;
+  }
+
+  stopTuner();
+  const analyser = ctx.createAnalyser();
+  // 8192 samples (~170 ms) son unos 7 ciclos de un Mi1 de bajo. Con 4096 el
+  // pico de autocorrelación se desviaba y ese Mi marcaba -9 cents estando
+  // afinado; con esta ventana el error queda en 3 cents o menos.
+  analyser.fftSize = 8192;
+  const buf = new Float32Array(analyser.fftSize);
+  tunerSource = ctx.createMediaStreamSource(localStream);
+  tunerSource.connect(analyser);
+  // El analizador NO se conecta a la salida: solo escucha, no devuelve sonido
+  // (si no, el instrumento se oiría por los parlantes y se acoplaría).
+
+  let quietFrames = 0;
+
+  const loop = () => {
+    analyser.getFloatTimeDomainData(buf);
+    const freq = detectPitch(buf, ctx.sampleRate);
+
+    if (freq) {
+      quietFrames = 0;
+      const { name, octave, cents } = freqToNote(freq);
+      noteEl.textContent = `${name}${octave}`;
+      noteEl.classList.toggle("in-tune", Math.abs(cents) <= 5);
+      needleEl.style.left = `${50 + Math.max(-50, Math.min(50, cents))}%`;
+      centsEl.textContent = Math.abs(cents) <= 5
+        ? `✅ Afinado · ${Math.round(freq)} Hz`
+        : `${cents > 0 ? "Muy alto ♯" : "Muy bajo ♭"} ${Math.abs(cents)} cents · ${Math.round(freq)} Hz`;
+    } else if (++quietFrames > 30) {
+      // Un poco de inercia: sin esto el número parpadea entre nota y silencio.
+      noteEl.textContent = "--";
+      noteEl.classList.remove("in-tune");
+      centsEl.textContent = "Toca una nota sostenida";
+    }
+
+    tunerRAF = requestAnimationFrame(loop);
+  };
+  loop();
 }
 
 function renderDrums(stage, closeButton) {
@@ -2423,7 +2768,9 @@ let focusWanted = false;    // el escenario actual pide modo enfoque
 let focusCollapsed = false; // este usuario decidió salir del enfoque localmente
 
 function applyFocus() {
-  document.body.classList.toggle("focus-mode", focusWanted && !focusCollapsed);
+  const on = focusWanted && !focusCollapsed;
+  document.body.classList.toggle("focus-mode", on);
+  if (!on) document.body.classList.remove("tools-open");
 }
 
 function setFocusMode(on) {
@@ -2771,7 +3118,8 @@ function startMetroScheduler() {
       clickAt(ctx, when, accent);
 
       const delayMs = Math.max(0, beatServerMs - nowServer);
-      setTimeout(() => flashBeat(accent), delayMs);
+      const beatIndex = metroNextBeat;
+      setTimeout(() => flashBeat(accent, beatIndex), delayMs);
 
       metroNextBeat++;
     }
@@ -2793,7 +3141,11 @@ function clickAt(ctx, when, accent) {
     const oscillator = ctx.createOscillator();
     const gain = ctx.createGain();
     oscillator.frequency.value = accent ? 1320 : 880;
-    gain.gain.setValueAtTime(accent ? 0.09 : 0.05, when);
+    // El clic salía a 0.05 mientras las notas de los instrumentos salen a
+    // 0.16: por eso se oía tan flojo. Ahora el tope es comparable y cada
+    // quien ajusta su propio nivel.
+    const peak = (accent ? 0.30 : 0.20) * metroVolume;
+    gain.gain.setValueAtTime(Math.max(0.0001, peak), when);
     gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.05);
     oscillator.connect(gain);
     gain.connect(ctx.destination);
@@ -2804,12 +3156,37 @@ function clickAt(ctx, when, accent) {
   }
 }
 
-function flashBeat(accent) {
+function flashBeat(accent, beatIndex = 0) {
   [dom.beatIndicator, dom.beatIndicatorAula].forEach(el => {
     if (!el) return;
     el.classList.add("on");
     el.style.background = accent ? "var(--blue)" : "";
     setTimeout(() => el.classList.remove("on"), 90);
+  });
+
+  // Fila de puntos: se enciende el que corresponde al pulso dentro del compás,
+  // así se ve DÓNDE va el compás y no solo que algo late.
+  const meter = metro?.meter > 1 ? metro.meter : 1;
+  const position = ((beatIndex % meter) + meter) % meter;
+  [dom.beatDots, dom.beatDotsAula].forEach(row => {
+    if (!row) return;
+    const dots = row.children;
+    for (let i = 0; i < dots.length; i++) dots[i].classList.toggle("on", i === position);
+  });
+}
+
+// Dibuja un punto por pulso del compás (o uno solo si no hay acento).
+function renderBeatDots() {
+  const running = !!metro?.running;
+  const meter = metro?.meter > 1 ? metro.meter : 1;
+  [dom.beatDots, dom.beatDotsAula].forEach(row => {
+    if (!row) return;
+    row.classList.toggle("hidden", !running);
+    if (!running) { row.innerHTML = ""; return; }
+    if (row.children.length !== meter) {
+      row.innerHTML = Array.from({ length: meter },
+        (_, i) => `<span class="beat-dot${i === 0 && meter > 1 ? " accent" : ""}"></span>`).join("");
+    }
   });
 }
 
@@ -2828,6 +3205,7 @@ function renderMetronomeUI() {
       ? `Sonando · ${metro.bpm} BPM${metro.meter > 1 ? ` · ${metro.meter}/4` : ""}`
       : "Apagado";
   }
+  renderBeatDots();
 }
 
 // Distancia de un instante (hora servidor) al pulso más cercano del metrónomo.
@@ -2845,35 +3223,46 @@ function beatOffset(tServerMs) {
 // de ruido, control de ganancia) recorta el sonido de los instrumentos.
 async function toggleMusicMode() {
   musicMode = !musicMode;
-  dom.toggleMusicMode.classList.toggle("on", musicMode);
+  renderAudioMode();
+
+  // IMPORTANTE: hay que soltar el micrófono ANTES de volver a pedirlo.
+  // El navegador aplica el procesado de audio por dispositivo, no por track:
+  // si el micro sigue abierto con los filtros anteriores, la segunda captura
+  // del MISMO micro devuelve un track con los ajustes viejos y el cambio de
+  // modo no surte efecto. Ese era el "a veces sí, a veces no".
+  destroyMicChain();
+  const oldTrack = localStream?.getAudioTracks()[0];
+  if (oldTrack && localStream) {
+    localStream.removeTrack(oldTrack);
+    oldTrack.stop();
+  }
 
   try {
     const newStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints() });
     tagAudioAsMusic(newStream);
     const newTrack = newStream.getAudioTracks()[0];
     newTrack.enabled = micOn;
-
-    const oldTrack = localStream?.getAudioTracks()[0];
-    if (oldTrack && localStream) {
-      localStream.removeTrack(oldTrack);
-      oldTrack.stop();
-    }
     localStream?.addTrack(newTrack);
 
-    if (musicMixer) {
-      refreshMixerMic(); // la mezcla con la música sigue siendo el track enviado
-    } else {
-      forEachSender("audio", sender => sender.replaceTrack(newTrack).catch(console.warn));
-    }
+    applyMicChain(); // arma la ganancia si hace falta y reenvía el track
 
     localStorage.setItem("musiaula-music-mode", musicMode ? "1" : "0");
     toast(musicMode
-      ? "🎼 Modo música activado: audio sin ningún filtro. Usa audífonos para evitar eco."
-      : "Modo voz activado: cancelación de eco encendida (sin filtros que recorten la música).");
+      ? "🎼 Modo instrumento: sin filtros. Sube 🎚️ si el instrumento entra flojo. Usa audífonos."
+      : "🎤 Modo voz: cancelación de eco encendida. Mejor para hablar, aplasta el instrumento.");
   } catch (error) {
     console.error("No se pudo cambiar el modo de audio", error);
+    // Nos quedamos sin micrófono: hay que recuperarlo como sea.
     musicMode = !musicMode;
-    dom.toggleMusicMode.classList.toggle("on", musicMode);
+    renderAudioMode();
+    try {
+      const fallback = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints() });
+      tagAudioAsMusic(fallback);
+      const track = fallback.getAudioTracks()[0];
+      track.enabled = micOn;
+      localStream?.addTrack(track);
+      applyMicChain();
+    } catch {}
     toast("No se pudo cambiar el modo de audio.");
   }
 }
