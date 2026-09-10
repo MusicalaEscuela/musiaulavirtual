@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agenda · MusiAula Virtual</title>
+  <meta name="description" content="Panel de coordinación para agendar las clases de MusiAula Virtual." />
+  <link rel="icon" type="image/png" href="./logo.png" />
+  <link rel="stylesheet" href="./styles.css?v=14" />
+</head>
+<body>
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <!-- Puerta: solo los correos de coordinación -->
+  <section id="gate" class="auth-gate">
+    <div class="auth-card card">
+      <img src="./logo.png" alt="Musicala" class="auth-logo" />
+      <h1>Agenda MusiAula</h1>
+      <p class="subtitle small">Panel de coordinación. Solo para los correos autorizados a agendar clases.</p>
+      <button id="googleLogin" class="google-btn">Continuar con Google</button>
+      <p id="gateMsg" class="hint center"></p>
+    </div>
+  </section>
+
+  <main id="panel" class="agenda-page hidden">
+    <header class="topbar">
+      <div class="brand compact">
+        <img src="./logo.png" alt="Musicala" class="brand-logo small" />
+        <div>
+          <p class="eyebrow">MusiAula Virtual</p>
+          <h1>Agenda de clases</h1>
+        </div>
+      </div>
+      <div class="top-actions">
+        <span id="whoami" class="status"></span>
+        <a class="secondary" href="./index.html">Ir al aula</a>
+        <button id="logout" class="danger">Cerrar sesión</button>
+      </div>
+    </header>
+
+    <div class="agenda-grid">
+      <form id="classForm" class="card form-card">
+        <h2>Agendar una clase</h2>
+
+        <label>
+          Correo del docente
+          <input id="teacherEmail" type="email" placeholder="profe@musicala.co" required />
+        </label>
+        <p class="hint">El aula sale de este correo. <strong id="roomPreview">—</strong></p>
+
+        <label>
+          Nombre del estudiante
+          <input id="studentName" placeholder="Juan Pérez" required />
+        </label>
+
+        <label>
+          Tipo
+          <select id="type">
+            <option value="semanal">Cada semana (mismo día y hora)</option>
+            <option value="unica">Una sola vez (fecha puntual)</option>
+          </select>
+        </label>
+
+        <label id="weekdayLabel">
+          Día de la semana
+          <select id="weekday">
+            <option value="1">Lunes</option>
+            <option value="2">Martes</option>
+            <option value="3">Miércoles</option>
+            <option value="4">Jueves</option>
+            <option value="5">Viernes</option>
+            <option value="6">Sábado</option>
+            <option value="0">Domingo</option>
+          </select>
+        </label>
+
+        <label id="dateLabel" class="hidden">
+          Fecha
+          <input id="date" type="date" />
+        </label>
+
+        <div class="row-2">
+          <label>
+            Hora de inicio
+            <input id="start" type="time" value="15:00" required />
+          </label>
+          <label>
+            Duración (minutos)
+            <input id="duration" type="number" min="15" max="180" step="5" value="45" required />
+          </label>
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="primary full">Agendar clase</button>
+        </div>
+        <p class="hint">El aula se abre 5 minutos antes y se cierra 10 minutos después de terminar. Fuera de eso nadie entra, ni el docente.</p>
+      </form>
+
+      <section class="card">
+        <div class="section-head">
+          <h2>Clases agendadas</h2>
+          <button id="refresh" class="tiny">Actualizar</button>
+        </div>
+        <label>
+          Filtrar por docente
+          <input id="filter" placeholder="Correo o nombre del estudiante" />
+        </label>
+        <div id="list" class="agenda-list">Cargando…</div>
+      </section>
+    </div>
+  </main>
+
+  <script type="module" src="./agenda-admin.js?v=1"></script>
+</body>
+</html>

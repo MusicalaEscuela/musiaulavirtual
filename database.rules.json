@@ -2,38 +2,40 @@
   "rules": {
     ".read": false,
     ".write": false,
-
     "rooms": {
       "$room": {
         ".read": "auth != null",
         ".write": "auth != null",
-
         "participants": {
           "$participantId": {
             ".validate": "newData.hasChildren(['name', 'role']) && newData.child('name').isString() && newData.child('role').isString()"
           }
         },
-
         "live": {
           ".validate": true
         },
-
         "responses": {
           "$responseId": {
             ".validate": "newData.hasChild('text')"
           }
         },
-
         "webrtc": {
           ".validate": true
         },
-
         "signals": {
           ".validate": true
         },
-
         "pulseTaps": {
           ".validate": true
+        }
+      }
+    },
+    "agenda": {
+      ".read": "auth != null",
+      ".write": "auth != null && (auth.token.email === 'adminmusicala@gmail.com' || auth.token.email === 'musicalaasesor@gmail.com' || auth.token.email === 'alekcaballeromusic@gmail.com' || auth.token.email === 'catalina.medina.leal@gmail.com')",
+      "$room": {
+        "$classId": {
+          ".validate": "newData.hasChildren(['type','start','duration']) && newData.child('start').isString() && newData.child('duration').isNumber()"
         }
       }
     }

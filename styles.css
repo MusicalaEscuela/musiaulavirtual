@@ -1741,3 +1741,39 @@ body.mode-danza .music-only { display: none !important; }
   word-break: break-all;
 }
 .personal-room .actions { margin-top: 0.6rem; }
+
+/* ===== Sala de espera y panel de agenda ===== */
+.wait-countdown {
+  font-size: clamp(1.6rem, 6vw, 2.4rem);
+  font-weight: 800;
+  margin: 0.6rem 0;
+  color: var(--cream);
+}
+
+.agenda-page { padding: 0 clamp(12px, 3vw, 28px) 40px; }
+.agenda-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .agenda-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.agenda-list { display: grid; gap: 12px; margin-top: 0.6rem; }
+.agenda-item {
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.agenda-item .hint { margin: 0.25rem 0; }
+.agenda-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 0.72rem;
+}

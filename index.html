@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="./logo.png" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=14" />
+  <link rel="stylesheet" href="./styles.css?v=15" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -130,6 +130,20 @@
         <div class="warning">
           <strong>Importante:</strong> funciona 1 a 1 y en grupos pequeños (hasta ~5 personas; cada participante extra consume más internet de todos). Para escuchar bien el metrónomo y el instrumento, usa <strong>audífonos</strong>.
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Sala de espera: la clase todavía no abre ===== -->
+  <section id="waitRoom" class="auth-gate hidden">
+    <div class="auth-card card">
+      <img src="./logo.png" alt="Musicala" class="auth-logo" />
+      <h1 id="waitTitle">Todavía no es la hora de tu clase</h1>
+      <p id="waitWhen" class="subtitle small"></p>
+      <p id="waitCountdown" class="wait-countdown"></p>
+      <p id="waitHint" class="hint center"></p>
+      <div class="actions">
+        <a class="secondary full" href="./index.html">Volver al inicio</a>
       </div>
     </div>
   </section>
@@ -433,6 +447,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=25"></script>
+  <script type="module" src="./app.js?v=26"></script>
 </body>
 </html>

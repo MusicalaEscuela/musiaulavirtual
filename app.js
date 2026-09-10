@@ -11,6 +11,8 @@ import {
 import { firebaseConfig } from "./firebase-config.js";
 import { loadBiblioteca } from "./biblioteca.js?v=4";
 import { isAuthorizedTeacher } from "./docentes-hub.js?v=2";
+import { personalRoomFor, isAdminEmail } from "./sala.js?v=1";
+import { estadoDeSala, textoCuando, ABRE_ANTES_MIN } from "./agenda-core.js?v=1";
 
 const NOTES = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si"];
 const STORAGE_KEY = "musiaula_prototipo_v2";
@@ -215,36 +217,6 @@ function init() {
    caracteres derivados del correo completo para que dos personas con el
    mismo usuario en dominios distintos no caigan en la misma aula. */
 
-function personalRoomFor(email, hubData) {
-  const normalized = String(email || "").trim().toLowerCase();
-  if (!normalized) return "";
-
-  // Slug propio: normalizeRoom() inventa un nombre ALEATORIO cuando el
-  // resultado queda vacío, y aquí eso rompería en silencio la promesa de que
-  // el aula es siempre la misma. Aquí un vacío tiene que ser vacío.
-  const slug = value => String(value || "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9-_]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60);
-
-  // Si coordinación le asignó un nombre en el Hub, ese manda.
-  const assigned = slug(hubData?.salaSlug || hubData?.slug);
-  if (assigned) return assigned;
-
-  const base = slug(normalized.split("@")[0]) || "docente";
-
-  // Huella corta y estable del correo completo (no es seguridad, es unicidad).
-  let hash = 0;
-  for (let i = 0; i < normalized.length; i++) {
-    hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
-  }
-  return `${base}-${hash.toString(36).slice(0, 4)}`;
-}
-
 let personalRoom = "";
 
 // Enlace permanente que el estudiante usa para TODAS las clases con este docente.
@@ -278,6 +250,85 @@ async function setupPersonalRoom(email) {
   // Se propone como sala por defecto, pero se puede escribir otra (clases
   // grupales, reemplazos, pruebas).
   if (!dom.roomName.value) dom.roomName.value = personalRoom;
+}
+
+
+/* ===== Control de horario =====
+   El aula personal es permanente, y eso abre un hueco: sin control, el
+   estudiante de las 3:00 podría entrar a las 2:00 y meterse en la clase de
+   otro. Por eso la sala solo se abre en la ventana de su clase agendada,
+   igual para el docente que para el estudiante.
+
+   La hora que manda es la del SERVIDOR (serverNow), no la del dispositivo:
+   un celular con la hora corrida no debe poder abrir el aula antes. */
+
+async function salaAbiertaAhora(room) {
+  if (!firebaseReady) return { abierto: true, motivo: "sin-firebase" };
+
+  // Coordinación entra siempre: son quienes prueban y arreglan.
+  if (isAdminEmail(currentUser?.email)) return { abierto: true, motivo: "admin" };
+
+  let clases = null;
+  try {
+    const snap = await get(ref(db, `agenda/${room}`));
+    clases = snap.val();
+  } catch (error) {
+    // Si no se puede leer la agenda no se cancela la clase: se deja entrar.
+    console.warn("No se pudo leer la agenda", error);
+    return { abierto: true, motivo: "sin-agenda-legible" };
+  }
+
+  // Una sala sin ninguna clase agendada es una sala suelta (pruebas, grupos):
+  // se permite, porque bloquearla dejaría fuera lo que hoy ya funciona.
+  if (!clases || !Object.keys(clases).length) return { abierto: true, motivo: "sin-agenda" };
+
+  return estadoDeSala(clases, serverNow());
+}
+
+// Pantalla de espera: dice cuándo es la clase en vez de un error seco.
+function mostrarEspera(estado) {
+  dom.lobby.classList.add("hidden");
+  dom.app.classList.add("hidden");
+  dom.authGate.classList.add("hidden");
+  dom.waitRoom.classList.remove("hidden");
+
+  if (estado.inicio) {
+    dom.waitTitle.textContent = "Todavía no es la hora de tu clase";
+    dom.waitWhen.textContent = `Tu próxima clase es el ${textoCuando(estado.inicio)}.`;
+    dom.waitHint.textContent = `El aula se abre ${ABRE_ANTES_MIN} minutos antes. Deja esta página abierta: entra sola cuando sea la hora.`;
+    iniciarCuentaAtras(estado.inicio);
+  } else {
+    dom.waitTitle.textContent = "No hay clases agendadas en esta aula";
+    dom.waitWhen.textContent = "Escríbele a coordinación para que agenden tu clase.";
+    dom.waitHint.textContent = "";
+  }
+}
+
+let waitTimer = null;
+
+function iniciarCuentaAtras(inicioMs) {
+  if (waitTimer) clearInterval(waitTimer);
+  const abre = inicioMs - ABRE_ANTES_MIN * 60000;
+
+  const pintar = () => {
+    const faltan = abre - serverNow();
+    if (faltan <= 0) {
+      clearInterval(waitTimer);
+      waitTimer = null;
+      dom.waitCountdown.textContent = "¡Ya puedes entrar!";
+      // Entra sola: el estudiante no tiene que estar recargando.
+      location.reload();
+      return;
+    }
+    const h = Math.floor(faltan / 3600000);
+    const m = Math.floor((faltan % 3600000) / 60000);
+    const s = Math.floor((faltan % 60000) / 1000);
+    dom.waitCountdown.textContent = h > 0
+      ? `Faltan ${h} h ${m} min`
+      : `Faltan ${m} min ${String(s).padStart(2, "0")} s`;
+  };
+  pintar();
+  waitTimer = setInterval(pintar, 1000);
 }
 
 /* ===== Autenticación ===== */
@@ -361,6 +412,7 @@ function bindDom() {
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
     "registerBtn", "resetPassword", "logoutBtn", "userBadge",
     "personalRoomCard", "personalRoomName", "copyPersonalLink", "usePersonalRoom",
+    "waitRoom", "waitTitle", "waitWhen", "waitHint", "waitCountdown",
     "metroChip", "metroStateText", "beatIndicatorAula", "meter",
     "metroVolume", "focusToolsBtn", "beatDots", "beatDotsAula",
     "timingToggle", "timingReadout"
@@ -899,7 +951,16 @@ async function enterClass({ room, displayName, role }) {
     }
   }
 
-  appState.room = normalizeRoom(room);
+  // Control de horario: se aplica DESPUÉS de validar el rol y antes de tocar
+  // nada de la sala, para que nadie deje rastro en una clase que no es suya.
+  const sala = normalizeRoom(room);
+  const estado = await salaAbiertaAhora(sala);
+  if (!estado.abierto) {
+    mostrarEspera(estado);
+    return;
+  }
+
+  appState.room = sala;
   appState.displayName = displayName;
   appState.role = role || "docente";
   saveLocal();
