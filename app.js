@@ -720,7 +720,7 @@ function bindDom() {
     "stageArea", "stageNote", "btnStageNote", "btnStageSeq", "btnStageQuiz",
     "btnStagePulse", "btnStageCelebrate", "btnStageClear",
     "btnStagePiano", "btnStageGuitar", "btnStageBass", "btnStageViolin", "btnStageDrums",
-    "btnStageTuner", "btnStageBoard", "btnStageMusic",
+    "btnStageTuner", "btnStageBoard", "btnStageMusic", "fixedTools",
     "btnStageSimon", "btnStageEar", "btnStageMatch", "btnStageCountdown",
     "videoArea", "videoGrid", "remotePlaceholder", "localVideo",
     "toggleMic", "toggleCam", "toggleMusicMode", "toggleSpeaker", "audioModeChip",
@@ -927,6 +927,8 @@ function setupEvents() {
     launchStage({ kind: "board", id: cryptoId(), title: "Pizarrón 🖍️" });
     toast("Pizarrón abierto. Los dos pueden dibujar.");
   });
+
+  renderHerramientasFijas();
 
   dom.btnStageMusic.addEventListener("click", () => {
     launchStage({ kind: "music", title: "Música 🎵" });
@@ -3409,6 +3411,7 @@ function panelDeRecurso({ material, lado }, isTeacher, dobles) {
     <div class="annot-tools" data-annot-tools>
       <button class="secondary tiny" data-tool="pointer" title="El estudiante ve tu dedo moverse sobre el recurso">👆 Señalar</button>
       <button class="secondary tiny" data-tool="draw" title="Dibuja encima y el estudiante lo ve en vivo">✏️ Dibujar</button>
+      <button class="secondary tiny" data-tool="texto" title="Escribe una nota encima del material">🔤 Texto</button>
       <button class="ghost tiny" data-annot-clear>🧽 Limpiar</button>
     </div>
   ` : "";
@@ -3442,6 +3445,42 @@ function panelDeRecurso({ material, lado }, isTeacher, dobles) {
   `;
 }
 
+
+
+/* ===== Herramientas fijas =====
+   Recursos que se usan en casi todas las clases y que no tiene sentido
+   buscar cada vez en una biblioteca de 878 elementos. Agregar otra es
+   añadir una línea aquí. */
+const HERRAMIENTAS_FIJAS = [
+  {
+    id: "tono",
+    etiqueta: "🎚️ Tono y velocidad",
+    titulo: "Tono Musicala (cambiar velocidad y tono)",
+    url: "https://tono-musicala.musicala.chatgpt.site/"
+  }
+];
+
+function renderHerramientasFijas() {
+  if (!dom.fixedTools) return;
+  dom.fixedTools.innerHTML = HERRAMIENTAS_FIJAS.map(h => `
+    <button class="secondary tiny" data-fixed="${escapeHtml(h.id)}" title="${escapeHtml(h.titulo)}">${escapeHtml(h.etiqueta)}</button>
+    <button class="ghost tiny" data-fixed-beside="${escapeHtml(h.id)}" title="Abrirla junto al material que ya está proyectado">⊞</button>
+  `).join("");
+
+  dom.fixedTools.querySelectorAll("[data-fixed]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const h = HERRAMIENTAS_FIJAS.find(x => x.id === btn.dataset.fixed);
+      if (h) projectResource(h.titulo, h.url);
+    });
+  });
+
+  dom.fixedTools.querySelectorAll("[data-fixed-beside]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const h = HERRAMIENTAS_FIJAS.find(x => x.id === btn.dataset.fixedBeside);
+      if (h) projectResource(h.titulo, h.url, { alLado: true });
+    });
+  });
+}
 
 /* ===== Reproductor de música sincronizado =====
    Cada dispositivo reproduce la canción por su cuenta; por la base de datos
@@ -3698,6 +3737,7 @@ function renderBoardStage(stage, isTeacher, closeButton) {
                 style="--tinta:${t.color}"><span></span></button>
       `).join("")}
       <button class="secondary tiny" data-tool="draw">✏️ Dibujar</button>
+      <button class="secondary tiny" data-tool="texto">🔤 Texto</button>
       <button class="ghost tiny" data-annot-clear>🧽 Borrar todo</button>
     </div>
     <p class="hint">Elige un color y dibuja. Lo que rayes aparece al instante en la pantalla del otro, y el otro también puede dibujar.</p>
@@ -3933,6 +3973,7 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
   // Los trazos son de este lienzo, no de la aplicación entera: con dos
   // materiales abiertos, cada uno lleva los suyos.
   let annotStrokes = new Map();
+  let annotTextos = [];  // { x, y, texto, color, tam }
 
   const ctx = canvas.getContext("2d");
   const INK = "#e0218a";
@@ -3952,9 +3993,23 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
     ctx.stroke();
   };
 
+  // El texto se ancla en coordenadas normalizadas igual que los trazos, y el
+  // tamaño se calcula sobre el alto del lienzo para que se vea proporcional
+  // en una tablet y en un celular.
+  const drawTexto = t => {
+    const tam = Math.max(12, (t.tam || 0.05) * canvas.height);
+    ctx.font = `700 ${tam}px "Segoe UI", system-ui, sans-serif`;
+    ctx.fillStyle = t.color || INK;
+    ctx.textBaseline = "top";
+    String(t.texto || "").split("\n").forEach((linea, i) => {
+      ctx.fillText(linea, t.x * canvas.width, t.y * canvas.height + i * tam * 1.2);
+    });
+  };
+
   const redraw = () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     for (const s of annotStrokes.values()) drawPts(s.pts, s.color, s.grosor);
+    annotTextos.forEach(drawTexto);
   };
 
   // El bitmap del canvas debe seguir el tamaño real del recurso. No basta con
@@ -3988,7 +4043,14 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
       if (!ev) return;
       if (ev.kind === "clear") {
         annotStrokes = new Map();
+        annotTextos = [];
         redraw();
+        return;
+      }
+      if (ev.kind === "texto" && ev.texto) {
+        syncSize();
+        annotTextos.push({ x: ev.x, y: ev.y, texto: ev.texto, color: ev.color, tam: ev.tam });
+        drawTexto(annotTextos[annotTextos.length - 1]);
         return;
       }
       if (ev.kind === "seg" && ev.by !== CLIENT_ID && Array.isArray(ev.pts)) {
@@ -4035,7 +4097,9 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
     annotTool = annotTool === tool ? null : tool;
     syncSize();
     canvas.classList.toggle("active", !!annotTool);
-    canvas.style.cursor = annotTool === "draw" ? "crosshair" : annotTool === "pointer" ? "pointer" : "";
+    canvas.style.cursor = annotTool === "draw" ? "crosshair"
+      : annotTool === "texto" ? "text"
+      : annotTool === "pointer" ? "pointer" : "";
     tools.querySelectorAll("[data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === annotTool));
     if (!annotTool) sendPointer(null);
   };
@@ -4049,8 +4113,47 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
 
   tools.querySelector('[data-tool="pointer"]')?.addEventListener("click", () => setTool("pointer"));
   tools.querySelector('[data-tool="draw"]')?.addEventListener("click", () => setTool("draw"));
+  tools.querySelector('[data-tool="texto"]')?.addEventListener("click", () => setTool("texto"));
+
+  /* Cuadro de texto: se escribe encima del lienzo, en el sitio exacto donde
+     se tocó, y al confirmar se pinta y se manda. Se usa un campo real y no
+     un prompt() del navegador para no sacar al docente de la clase. */
+  const abrirCuadroTexto = pos => {
+    zona.querySelector(".board-input")?.remove();
+
+    const caja = document.createElement("textarea");
+    caja.className = "board-input";
+    caja.rows = 1;
+    caja.placeholder = "Escribe y presiona Enter";
+    caja.style.left = (pos.x * 100) + "%";
+    caja.style.top = (pos.y * 100) + "%";
+    caja.style.color = annotColor;
+    media.appendChild(caja);
+    caja.focus();
+
+    const confirmar = () => {
+      const texto = caja.value.trim();
+      caja.remove();
+      if (!texto) return;
+
+      const evento = { x: pos.x, y: pos.y, texto, color: annotColor, tam: 0.05 };
+      annotTextos.push(evento);
+      drawTexto(evento);
+      if (firebaseReady && roomPath) {
+        push(ref(db, `${roomPath}/annot/${canal}/events`), { kind: "texto", by: CLIENT_ID, ...evento }).catch(() => {});
+      }
+    };
+
+    caja.addEventListener("keydown", e => {
+      // Enter confirma; Shift+Enter hace salto de línea; Escape cancela.
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); confirmar(); }
+      if (e.key === "Escape") caja.remove();
+    });
+    caja.addEventListener("blur", confirmar);
+  };
   tools.querySelector("[data-annot-clear]")?.addEventListener("click", () => {
     annotStrokes = new Map();
+    annotTextos = [];
     redraw();
     if (firebaseReady && roomPath) {
       push(ref(db, `${roomPath}/annot/${canal}/events`), { kind: "clear", by: CLIENT_ID }).catch(() => {});
@@ -4087,6 +4190,10 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
   };
 
   canvas.addEventListener("pointerdown", e => {
+    if (annotTool === "texto") {
+      abrirCuadroTexto(norm(e));
+      return;
+    }
     if (annotTool !== "draw") return;
     syncSize();
     try { canvas.setPointerCapture(e.pointerId); } catch {}

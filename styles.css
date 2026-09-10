@@ -2182,3 +2182,21 @@ body.mode-danza .music-only { display: none !important; }
   color: var(--muted);
   margin: 0.5rem 0 0;
 }
+
+/* Herramientas fijas del escenario */
+.fixed-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 0.5rem; }
+
+/* Cuadro para escribir sobre el pizarrón o el material */
+.board-input {
+  position: absolute;
+  z-index: 8;
+  min-width: 160px;
+  max-width: 60%;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 2px dashed currentColor;
+  background: rgba(255, 255, 255, 0.94);
+  font: 700 1rem "Segoe UI", system-ui, sans-serif;
+  resize: none;
+  outline: none;
+}

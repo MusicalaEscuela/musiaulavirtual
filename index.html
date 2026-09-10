@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="./logo.png" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=23" />
+  <link rel="stylesheet" href="./styles.css?v=24" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -245,6 +245,12 @@
               Volumen de la música (tu voz siempre queda por encima)
               <input id="danceMusicVol" type="range" min="0" max="1.5" step="0.05" value="0.8" />
             </label>
+          </div>
+
+          <div class="mini-form">
+            <h3>Herramientas de siempre</h3>
+            <p class="hint">Las que se usan en casi todas las clases, sin buscarlas en la biblioteca. El ⊞ las abre junto a lo que ya esté proyectado.</p>
+            <div id="fixedTools" class="fixed-tools"></div>
           </div>
 
           <div class="mini-form music-only">
@@ -487,6 +493,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=34"></script>
+  <script type="module" src="./app.js?v=35"></script>
 </body>
 </html>
