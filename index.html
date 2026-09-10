@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="./logo.png" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=13" />
+  <link rel="stylesheet" href="./styles.css?v=14" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -87,6 +87,16 @@
             <option value="danza">💃 Baile / Danza (prioridad al audio y la música)</option>
           </select>
         </label>
+
+        <div id="personalRoomCard" class="personal-room hidden">
+          <p class="label">Tu aula personal</p>
+          <p class="personal-room-name" id="personalRoomName">—</p>
+          <p class="hint">Siempre es la misma. Este enlace no cambia nunca: compártelo una vez con tus estudiantes y sirve para todas las clases.</p>
+          <div class="actions wrap">
+            <button type="button" id="copyPersonalLink" class="secondary">Copiar enlace para el estudiante</button>
+            <button type="button" id="usePersonalRoom" class="ghost tiny">Usar mi aula</button>
+          </div>
+        </div>
 
         <label>
           Nombre de sala
@@ -423,6 +433,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=24"></script>
+  <script type="module" src="./app.js?v=25"></script>
 </body>
 </html>

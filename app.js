@@ -10,7 +10,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { loadBiblioteca } from "./biblioteca.js?v=4";
-import { isAuthorizedTeacher } from "./docentes-hub.js?v=1";
+import { isAuthorizedTeacher } from "./docentes-hub.js?v=2";
 
 const NOTES = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si"];
 const STORAGE_KEY = "musiaula_prototipo_v2";
@@ -171,6 +171,7 @@ function init() {
       if (!dom.displayName.value && user.displayName) {
         dom.displayName.value = user.displayName;
       }
+      setupPersonalRoom(user.email);
       // Reloj del servidor para el metrónomo sincronizado
       onValue(ref(db, ".info/serverTimeOffset"), snap => {
         serverTimeOffset = snap.val() || 0;
@@ -201,6 +202,82 @@ function init() {
       dom.app.classList.add("hidden");
     }
   });
+}
+
+
+/* ===== Aula personal del docente =====
+   Cada docente tiene UNA sala que no cambia nunca, derivada de su correo:
+   el enlace se comparte una sola vez y sirve para todas las clases, sin
+   crear reuniones nuevas y sin que dos docentes compartan cuenta.
+
+   El nombre sale del correo, así que el mismo correo siempre da la misma
+   sala en cualquier dispositivo, sin guardar nada. Se le añaden cuatro
+   caracteres derivados del correo completo para que dos personas con el
+   mismo usuario en dominios distintos no caigan en la misma aula. */
+
+function personalRoomFor(email, hubData) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return "";
+
+  // Slug propio: normalizeRoom() inventa un nombre ALEATORIO cuando el
+  // resultado queda vacío, y aquí eso rompería en silencio la promesa de que
+  // el aula es siempre la misma. Aquí un vacío tiene que ser vacío.
+  const slug = value => String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9-_]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+
+  // Si coordinación le asignó un nombre en el Hub, ese manda.
+  const assigned = slug(hubData?.salaSlug || hubData?.slug);
+  if (assigned) return assigned;
+
+  const base = slug(normalized.split("@")[0]) || "docente";
+
+  // Huella corta y estable del correo completo (no es seguridad, es unicidad).
+  let hash = 0;
+  for (let i = 0; i < normalized.length; i++) {
+    hash = (hash * 31 + normalized.charCodeAt(i)) >>> 0;
+  }
+  return `${base}-${hash.toString(36).slice(0, 4)}`;
+}
+
+let personalRoom = "";
+
+// Enlace permanente que el estudiante usa para TODAS las clases con este docente.
+function personalStudentLink() {
+  const url = new URL(location.href);
+  url.search = "";
+  url.searchParams.set("room", personalRoom);
+  url.searchParams.set("role", "estudiante");
+  return url.toString();
+}
+
+async function setupPersonalRoom(email) {
+  if (!email) {
+    dom.personalRoomCard?.classList.add("hidden");
+    return;
+  }
+
+  const check = await isAuthorizedTeacher(email);
+  if (!check.ok) {
+    // No es docente: no tiene aula propia, entra por el enlace que le pasen.
+    dom.personalRoomCard?.classList.add("hidden");
+    return;
+  }
+
+  personalRoom = personalRoomFor(email, check.data);
+  if (!personalRoom) return;
+
+  dom.personalRoomName.textContent = personalRoom;
+  dom.personalRoomCard.classList.remove("hidden");
+
+  // Se propone como sala por defecto, pero se puede escribir otra (clases
+  // grupales, reemplazos, pruebas).
+  if (!dom.roomName.value) dom.roomName.value = personalRoom;
 }
 
 /* ===== Autenticación ===== */
@@ -283,6 +360,7 @@ function bindDom() {
     "chatForm", "chatInput",
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
     "registerBtn", "resetPassword", "logoutBtn", "userBadge",
+    "personalRoomCard", "personalRoomName", "copyPersonalLink", "usePersonalRoom",
     "metroChip", "metroStateText", "beatIndicatorAula", "meter",
     "metroVolume", "focusToolsBtn", "beatDots", "beatDotsAula",
     "timingToggle", "timingReadout"
@@ -536,6 +614,23 @@ function setupEvents() {
 
   dom.focusToolsBtn.addEventListener("click", () => {
     document.body.classList.toggle("tools-open");
+  });
+
+  dom.usePersonalRoom.addEventListener("click", () => {
+    if (!personalRoom) return;
+    dom.roomName.value = personalRoom;
+    toast("Listo: entrarás a tu aula personal.");
+  });
+
+  dom.copyPersonalLink.addEventListener("click", async () => {
+    if (!personalRoom) return;
+    const link = personalStudentLink();
+    try {
+      await navigator.clipboard.writeText(link);
+      toast("Enlace copiado. Sirve para todas las clases: compártelo una sola vez.");
+    } catch {
+      prompt("Copia este enlace para tus estudiantes:", link);
+    }
   });
 
   dom.toggleMusicMode.addEventListener("click", toggleMusicMode);

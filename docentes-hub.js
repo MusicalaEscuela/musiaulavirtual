@@ -38,19 +38,20 @@ export async function isAuthorizedTeacher(email) {
   try {
     const cached = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
     if (cached?.email === normalized && Date.now() - cached.at < CACHE_TTL_MS && cached.ok) {
-      return { ok: true, reason: "cache" };
+      return { ok: true, reason: "cache", data: cached.data || null };
     }
   } catch {}
 
   try {
     const snap = await getDoc(doc(db(), "teacherDirectory", normalized));
-    const ok = snap.exists() && snap.data()?.enabled !== false;
+    const data = snap.exists() ? snap.data() : null;
+    const ok = snap.exists() && data?.enabled !== false;
     if (ok) {
-      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ email: normalized, ok: true, at: Date.now() })); } catch {}
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({ email: normalized, ok: true, at: Date.now(), data })); } catch {}
     }
-    return { ok, reason: ok ? "directorio" : "no-registrado" };
+    return { ok, reason: ok ? "directorio" : "no-registrado", data };
   } catch (error) {
     console.warn("No se pudo verificar el docente contra el Hub", error);
-    return { ok: true, reason: "sin-verificar" };
+    return { ok: true, reason: "sin-verificar", data: null };
   }
 }
