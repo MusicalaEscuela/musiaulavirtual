@@ -1662,3 +1662,66 @@ body.mode-danza .music-only { display: none !important; }
   background: var(--blue);
   box-shadow: 0 0 18px var(--blue);
 }
+
+/* ===== Medidor de precisión rítmica ===== */
+.timing-btn { margin-top: 0.7rem; }
+.timing-btn.on { background: linear-gradient(90deg, var(--blue), var(--pink)); color: #fff; }
+.timing-hint { margin: 0.35rem 0 0; }
+
+.timing-readout { margin-top: 0.6rem; display: grid; gap: 0.7rem; }
+.timing-row {
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.timing-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 0.85rem;
+}
+.timing-verdict { font-weight: 700; }
+.timing-verdict.good { color: var(--good); }
+.timing-verdict.early { color: var(--warn); }
+.timing-verdict.late { color: var(--pink-2); }
+
+.timing-track {
+  position: relative;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+/* Franja central: el margen que cuenta como "en el pulso" (±70 ms de ±150). */
+.timing-zone {
+  position: absolute;
+  left: 26.7%;
+  width: 46.6%;
+  top: 0;
+  bottom: 0;
+  background: rgba(74, 222, 128, 0.2);
+}
+.timing-needle {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 4px;
+  margin-left: -2px;
+  border-radius: 2px;
+  background: var(--pink);
+  transition: left 0.12s ease;
+}
+.timing-needle.good { background: var(--good); }
+.timing-needle.early { background: var(--warn); }
+
+.timing-foot {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.68rem;
+  opacity: 0.65;
+  margin-top: 4px;
+}

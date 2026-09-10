@@ -284,7 +284,8 @@ function bindDom() {
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
     "registerBtn", "resetPassword", "logoutBtn", "userBadge",
     "metroChip", "metroStateText", "beatIndicatorAula", "meter",
-    "metroVolume", "focusToolsBtn", "beatDots", "beatDotsAula"
+    "metroVolume", "focusToolsBtn", "beatDots", "beatDotsAula",
+    "timingToggle", "timingReadout"
   ].forEach(id => dom[id] = document.getElementById(id));
 
   dom.tabs = Array.from(document.querySelectorAll(".tab"));
@@ -525,6 +526,12 @@ function setupEvents() {
     localStorage.setItem("musiaula-metro-vol", String(metroVolume));
     // Un clic de muestra para oír el cambio sin esperar al siguiente pulso.
     try { clickAt(ensureAudio(), ensureAudio().currentTime + 0.01, false); } catch {}
+  });
+
+  dom.timingToggle.addEventListener("click", () => {
+    if (timingOn) stopTimingMeter();
+    else if (!metro?.running) toast("Enciende el metrónomo primero: la medición es contra el pulso.");
+    else startTimingMeter();
   });
 
   dom.focusToolsBtn.addEventListener("click", () => {
@@ -874,6 +881,8 @@ async function connectRoom() {
     if (value) mergeState(value);
   });
 
+  listenTiming();
+
   // Respuestas: cola compartida, cada una llega una sola vez.
   listen(query(ref(db, `${roomPath}/responses`), limitToLast(30)), null, snap => {
     const response = snap.val();
@@ -998,6 +1007,7 @@ function leaveClass() {
   unsubscribers = [];
 
   if (presenceRef) remove(presenceRef).catch(() => {});
+  stopTimingMeter(true);
   hangUp();
   stopMetroScheduler();
   stopStats();
@@ -2759,6 +2769,172 @@ let annotUnsubs = [];
 let annotStrokes = new Map(); // strokeId -> { pts: [{x,y}, ...] }
 let annotTool = null;
 
+
+/* ===== Medidor de precisión rítmica =====
+   El problema que resuelve: por la latencia de la red, el docente oye al
+   estudiante 100-250 ms tarde, así que no puede juzgar de oído si va a
+   tiempo. El estudiante puede estar perfecto sobre SU clic y sonar atrasado
+   al otro lado. Eso no se arregla sincronizando mejor: es el viaje del
+   sonido.
+
+   La salida es no juzgar de oído. Cada dispositivo escucha su PROPIO
+   micrófono, detecta el ataque de cada nota, lo compara contra su propio
+   metrónomo (que sí está sincronizado con el del otro) y publica solo el
+   número. El número llega tarde, pero llega intacto: dice exactamente qué
+   tan a tiempo tocó, sin contaminarse con el retraso. */
+
+let timingOn = false;
+let timingRAF = null;
+let timingSource = null;
+let timingUnsub = null;
+let timingDeltas = [];      // últimos desfases medidos aquí
+let timingLastOnset = 0;
+let timingLastWrite = 0;
+
+function stopTimingMeter(silent = false) {
+  timingOn = false;
+  if (timingRAF) cancelAnimationFrame(timingRAF);
+  timingRAF = null;
+  try { timingSource?.disconnect(); } catch {}
+  timingSource = null;
+  timingDeltas = [];
+  renderTimingButton();
+  if (firebaseReady && roomPath) {
+    remove(ref(db, `${roomPath}/timing/${CLIENT_ID}`)).catch(() => {});
+  }
+  if (!silent) toast("Dejaste de medir tu precisión.");
+}
+
+function startTimingMeter() {
+  if (!localStream?.getAudioTracks().length) {
+    toast("No hay micrófono en este dispositivo para medir.");
+    return;
+  }
+
+  let ctx;
+  try {
+    ctx = ensureAudio();
+  } catch {
+    toast("Este navegador no dejó abrir el audio.");
+    return;
+  }
+
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024; // ventana corta: aquí importa CUÁNDO empieza la nota
+  const buf = new Float32Array(analyser.fftSize);
+  timingSource = ctx.createMediaStreamSource(new MediaStream([localStream.getAudioTracks()[0]]));
+  timingSource.connect(analyser);
+
+  timingOn = true;
+  timingDeltas = [];
+  timingLastOnset = 0;
+  renderTimingButton();
+
+  // Nivel de fondo que se adapta a la sala, para no confundir ruido con nota.
+  let baseline = 0.01;
+
+  const loop = () => {
+    if (!timingOn) return;
+    analyser.getFloatTimeDomainData(buf);
+
+    let rms = 0;
+    for (let i = 0; i < buf.length; i++) rms += buf[i] * buf[i];
+    rms = Math.sqrt(rms / buf.length);
+
+    const now = Date.now();
+    // Un ataque es un salto brusco sobre el fondo. El margen de 140 ms evita
+    // contar el mismo golpe dos veces mientras la nota suena.
+    const isOnset = rms > Math.max(0.02, baseline * 3.5) && now - timingLastOnset > 140;
+
+    if (isOnset) {
+      timingLastOnset = now;
+      registerOnset();
+    }
+
+    // El fondo sube despacio y baja rápido: se adapta sin tragarse los ataques.
+    baseline = rms > baseline ? baseline * 0.98 + rms * 0.02 : baseline * 0.9 + rms * 0.1;
+
+    timingRAF = requestAnimationFrame(loop);
+  };
+  loop();
+  toast("🎯 Midiendo. Toca negras sobre el pulso y mira el resultado.");
+}
+
+function registerOnset() {
+  const offset = beatOffset(serverNow());
+  if (!offset) return;
+
+  // Solo cuentan las notas que caen CERCA de un pulso. Si el estudiante toca
+  // corcheas, las de contratiempo quedarían a medio pulso del clic y se
+  // leerían como un error enorme: esas se ignoran en vez de mentir.
+  const intervalMs = 60000 / metro.bpm;
+  if (Math.abs(offset.deltaMs) > intervalMs * 0.35) return;
+
+  timingDeltas.push(offset.deltaMs);
+  if (timingDeltas.length > 16) timingDeltas.shift();
+
+  // Se publica el resumen, no cada golpe: un solo nodo que se reescribe.
+  const now = Date.now();
+  if (now - timingLastWrite < 200) return;
+  timingLastWrite = now;
+
+  const avg = timingDeltas.reduce((sum, d) => sum + d, 0) / timingDeltas.length;
+  if (firebaseReady && roomPath) {
+    set(ref(db, `${roomPath}/timing/${CLIENT_ID}`), {
+      name: appState.displayName || "Participante",
+      last: Math.round(offset.deltaMs),
+      avg: Math.round(avg),
+      count: timingDeltas.length,
+      at: now
+    }).catch(() => {});
+    onDisconnect(ref(db, `${roomPath}/timing/${CLIENT_ID}`)).remove();
+  }
+  renderTiming({ [CLIENT_ID]: { name: "Tú", last: offset.deltaMs, avg, count: timingDeltas.length } }, true);
+}
+
+function listenTiming() {
+  if (!firebaseReady || !roomPath) return;
+  timingUnsub = listen(ref(db, `${roomPath}/timing`), snap => renderTiming(snap.val() || {}));
+}
+
+function renderTimingButton() {
+  if (!dom.timingToggle) return;
+  dom.timingToggle.textContent = timingOn ? "⏹ Dejar de medir" : "🎯 Medir mi precisión";
+  dom.timingToggle.classList.toggle("on", timingOn);
+}
+
+function renderTiming(entries, localOnly = false) {
+  if (!dom.timingReadout) return;
+  const list = Object.entries(entries || {});
+
+  if (!list.length) {
+    dom.timingReadout.innerHTML = "";
+    return;
+  }
+
+  dom.timingReadout.innerHTML = list.map(([id, t]) => {
+    if (!t || typeof t.avg !== "number") return "";
+    const name = id === CLIENT_ID ? "Tú" : (t.name || "Participante");
+    const avg = Math.round(t.avg);
+    const cls = Math.abs(avg) <= PULSE_GOOD_MS ? "good" : avg < 0 ? "early" : "late";
+    const tendencia = Math.abs(avg) <= PULSE_GOOD_MS
+      ? "En el pulso"
+      : avg < 0 ? `Se adelanta ${Math.abs(avg)} ms` : `Se atrasa ${avg} ms`;
+    // La aguja se mueve dentro de ±150 ms; más allá se queda en el borde.
+    const pos = 50 + Math.max(-50, Math.min(50, (avg / 150) * 50));
+    return `
+      <div class="timing-row">
+        <div class="timing-head"><strong>${escapeHtml(name)}</strong><span class="timing-verdict ${cls}">${tendencia}</span></div>
+        <div class="timing-track">
+          <div class="timing-zone"></div>
+          <div class="timing-needle ${cls}" style="left:${pos}%"></div>
+        </div>
+        <div class="timing-foot"><span>adelante</span><span>${t.count || 0} notas</span><span>atrás</span></div>
+      </div>
+    `;
+  }).join("");
+}
+
 /* ===== Modo enfoque =====
    Al proyectar un recurso la sala se concentra en él: se oculta el panel de
    herramientas y las cámaras pasan a un recuadro flotante, así el recurso
@@ -3093,6 +3269,7 @@ function applyMetronome(state) {
 
   stopMetroScheduler();
   if (metro?.running) startMetroScheduler();
+  else if (timingOn) stopTimingMeter(true);
 }
 
 function startMetroScheduler() {

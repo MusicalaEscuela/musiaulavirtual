@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="./logo.png" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=12" />
+  <link rel="stylesheet" href="./styles.css?v=13" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -291,6 +291,10 @@
               <span id="beatIndicatorAula" class="beat">●</span>
             </div>
             <div id="beatDotsAula" class="beat-dots" aria-hidden="true"></div>
+
+            <button id="timingToggle" class="secondary full timing-btn">🎯 Medir mi precisión</button>
+            <p class="hint timing-hint">Tu dispositivo mide contra TU metrónomo y envía solo el resultado. Así el número no se retrasa aunque el sonido sí.</p>
+            <div id="timingReadout" class="timing-readout"></div>
             <label class="metro-vol">
               🔉 Volumen del clic (en tu dispositivo)
               <input id="metroVolume" type="range" min="0" max="1" step="0.05" value="0.55" />
@@ -419,6 +423,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=23"></script>
+  <script type="module" src="./app.js?v=24"></script>
 </body>
 </html>
