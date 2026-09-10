@@ -734,6 +734,7 @@ function bindDom() {
     "observerPanel", "observerList",
     "waitRoom", "waitTitle", "waitWhen", "waitHint", "waitCountdown",
     "metroChip", "metroStateText", "beatIndicatorAula", "meter", "observerChip",
+    "tipsPanel", "tipsList", "tipsClose", "tipsGo", "tipsMute", "tipsOpen",
     "metroVolume", "focusToolsBtn", "beatDots", "beatDotsAula",
     "timingToggle", "timingReadout", "echoWarning", "fixEcho", "remoteHelp", "remoteTargets"
   ].forEach(id => dom[id] = document.getElementById(id));
@@ -929,6 +930,14 @@ function setupEvents() {
   });
 
   renderHerramientasFijas();
+
+  dom.tipsOpen.addEventListener("click", abrirTips);
+  dom.tipsClose.addEventListener("click", cerrarTips);
+  dom.tipsGo.addEventListener("click", cerrarTips);
+  dom.tipsPanel.addEventListener("click", event => {
+    // Tocar fuera de la tarjeta también cierra.
+    if (event.target === dom.tipsPanel) cerrarTips();
+  });
 
   dom.btnStageMusic.addEventListener("click", () => {
     launchStage({ kind: "music", title: "Música 🎵" });
@@ -1437,6 +1446,7 @@ async function connectRoom() {
   });
 
   setStatus("En sala", true);
+  quizasMostrarTips();
 }
 
 function listen(reference, onValueCb, onChildCb) {
@@ -3446,6 +3456,109 @@ function panelDeRecurso({ material, lado }, isTeacher, dobles) {
 }
 
 
+
+
+/* ===== "¿Qué puedo hacer?" =====
+   Los docentes no exploran menús: usan lo que ya conocen. Este recordatorio
+   está escrito por lo que la profe QUIERE lograr ("quiero poner música"), no
+   por el nombre de la función, que es lo que nadie busca. Aparece una vez al
+   día al entrar y queda un botón para reabrirlo. */
+
+const TIPS = [
+  {
+    icono: "🎵",
+    quiero: "Poner una canción para la clase",
+    como: "Escenario → 🎵 Música. Pega el enlace de YouTube y suena en los dos dispositivos a la vez, sincronizada.",
+    porque: "No tienes que compartir pantalla ni poner el celular al lado del micrófono."
+  },
+  {
+    icono: "🎚️",
+    quiero: "Bajarle la velocidad o cambiar el tono a una canción",
+    como: "Escenario → Herramientas de siempre → 🎚️ Tono y velocidad.",
+    porque: "Es Tono Musicala, ya integrado: no hay que buscarlo en la biblioteca."
+  },
+  {
+    icono: "🖍️",
+    quiero: "Explicar algo dibujando",
+    como: "Escenario → 🖍️ Pizarrón. Cinco colores, y 🔤 Texto para escribir cuadros de texto.",
+    porque: "El estudiante también puede dibujar, y ves lo suyo al instante."
+  },
+  {
+    icono: "⊞",
+    quiero: "Mostrar dos materiales al tiempo",
+    como: "Proyecta el primero y en el segundo usa ⊞ Al lado.",
+    porque: "Sirve para comparar una partitura con un diagrama, por ejemplo."
+  },
+  {
+    icono: "👆",
+    quiero: "Señalar algo dentro del material",
+    como: "Con el material proyectado: 👆 Señalar mueve un dedo que el estudiante ve, y ✏️ Dibujar raya encima.",
+    porque: "Ojo: si tú bajas el PDF, el estudiante NO baja contigo. Lo que sí ve es lo que señalas o dibujas."
+  },
+  {
+    icono: "🎼",
+    quiero: "Que se oiga bien mi instrumento",
+    como: "Botón 🎤 Modo voz / 🎼 Instrumento en la barra de abajo, y sube 🎚️ Volumen de tu instrumento.",
+    porque: "Modo instrumento manda el audio sin filtros. Necesita audífonos: sin ellos todos se oyen doble."
+  },
+  {
+    icono: "🎯",
+    quiero: "Saber si el estudiante va a tiempo",
+    como: "Enciende el metrónomo y pídele que active 🎯 Medir mi precisión en su pantalla.",
+    porque: "Por la latencia tú lo oyes tarde aunque vaya perfecto. El medidor te da el dato real."
+  },
+  {
+    icono: "🎸",
+    quiero: "Mostrar notas en un instrumento",
+    como: "Escenario → Piano, Guitarra, Bajo, Violín o Batería. Suenan al tocarlos, en ambas pantallas.",
+    porque: "También hay 🎯 Afinador, que usa el micrófono de cada quien."
+  },
+  {
+    icono: "🚑",
+    quiero: "Arreglar la clase cuando algo falla",
+    como: "↻ Reconectar si alguien no se ve; 🚑 Rescate si todo se traba.",
+    porque: "Rescate reinicia sin perder la sala ni tener que volver a entrar."
+  }
+];
+
+const TIPS_KEY = "musiaula_tips_visto";
+const TIPS_MUDO = "musiaula_tips_mudo";
+
+function renderTips() {
+  if (!dom.tipsList) return;
+  dom.tipsList.innerHTML = TIPS.map(t => `
+    <article class="tip">
+      <span class="tip-icono">${t.icono}</span>
+      <div>
+        <h3>${escapeHtml(t.quiero)}</h3>
+        <p class="tip-como">${escapeHtml(t.como)}</p>
+        <p class="tip-porque">${escapeHtml(t.porque)}</p>
+      </div>
+    </article>
+  `).join("");
+}
+
+function abrirTips() {
+  renderTips();
+  dom.tipsPanel?.classList.remove("hidden");
+  dom.tipsPanel?.setAttribute("aria-hidden", "false");
+}
+
+function cerrarTips() {
+  dom.tipsPanel?.classList.add("hidden");
+  dom.tipsPanel?.setAttribute("aria-hidden", "true");
+  if (dom.tipsMute?.checked) localStorage.setItem(TIPS_MUDO, "1");
+  localStorage.setItem(TIPS_KEY, new Date().toISOString().slice(0, 10));
+}
+
+/* Se muestra una vez al día: al entrar todos los días recuerda lo que hay,
+   sin volverse un estorbo dentro de la misma jornada. */
+function quizasMostrarTips() {
+  if (appState.role !== "docente") return;
+  if (localStorage.getItem(TIPS_MUDO) === "1") return;
+  if (localStorage.getItem(TIPS_KEY) === new Date().toISOString().slice(0, 10)) return;
+  setTimeout(abrirTips, 1200); // deja que la clase cargue primero
+}
 
 /* ===== Herramientas fijas =====
    Recursos que se usan en casi todas las clases y que no tiene sentido
