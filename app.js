@@ -269,20 +269,33 @@ async function salaAbiertaAhora(room) {
   if (isAdminEmail(currentUser?.email)) return { abierto: true, motivo: "admin" };
 
   let clases = null;
-  try {
-    const snap = await get(ref(db, `agenda/${room}`));
-    clases = snap.val();
-  } catch (error) {
-    // Si no se puede leer la agenda no se cancela la clase: se deja entrar.
+  let error = null;
+  // Dos intentos: un tropiezo de red no debería abrir todas las aulas, que es
+  // justo lo que pasaría si un fallo pasajero contara como "no se pudo leer".
+  for (let intento = 0; intento < 2; intento++) {
+    try {
+      const snap = await get(ref(db, `agenda/${room}`));
+      clases = snap.val();
+      error = null;
+      break;
+    } catch (e) {
+      error = e;
+      if (intento === 0) await new Promise(r => setTimeout(r, 700));
+    }
+  }
+
+  if (error) {
+    // Tras dos fallos se deja entrar: a esas alturas el problema es de red y
+    // la clase no va a poder darse igual. Queda avisado, no silencioso.
     console.warn("No se pudo leer la agenda", error);
+    toast("No se pudo verificar el horario de la clase; entras igual para no frenarla.");
     return { abierto: true, motivo: "sin-agenda-legible" };
   }
 
-  // Una sala sin ninguna clase agendada es una sala suelta (pruebas, grupos):
-  // se permite, porque bloquearla dejaría fuera lo que hoy ya funciona.
-  if (!clases || !Object.keys(clases).length) return { abierto: true, motivo: "sin-agenda" };
-
-  return estadoDeSala(clases, serverNow());
+  // Una sala sin clases agendadas está CERRADA: conocer el nombre del aula ya
+  // no alcanza para entrar. Es el candado más fuerte, y su precio es que todo
+  // tiene que estar agendado antes, incluidas las pruebas.
+  return estadoDeSala(clases || {}, serverNow());
 }
 
 // Pantalla de espera: dice cuándo es la clase en vez de un error seco.
@@ -298,9 +311,9 @@ function mostrarEspera(estado) {
     dom.waitHint.textContent = `El aula se abre ${ABRE_ANTES_MIN} minutos antes. Deja esta página abierta: entra sola cuando sea la hora.`;
     iniciarCuentaAtras(estado.inicio);
   } else {
-    dom.waitTitle.textContent = "No hay clases agendadas en esta aula";
-    dom.waitWhen.textContent = "Escríbele a coordinación para que agenden tu clase.";
-    dom.waitHint.textContent = "";
+    dom.waitTitle.textContent = "Esta aula no tiene clases agendadas";
+    dom.waitWhen.textContent = "Para entrar, la clase tiene que estar en la agenda de Musicala.";
+    dom.waitHint.textContent = "Si crees que es un error, escríbele a coordinación con tu nombre y el horario de tu clase.";
   }
 }
 
