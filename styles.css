@@ -2123,3 +2123,62 @@ body.mode-danza .music-only { display: none !important; }
   background: rgba(74, 222, 128, 0.12);
   border: 1px solid rgba(74, 222, 128, 0.35);
 }
+
+/* ===== Reproductor de música ===== */
+.music-search {
+  display: flex;
+  gap: 8px;
+  max-width: 640px;
+  margin: 0 auto 0.4rem;
+}
+.music-search input { flex: 1 1 auto; }
+
+.music-box {
+  position: relative;
+  width: min(100%, 760px);
+  margin: 0.6rem auto;
+  aspect-ratio: 16 / 9;
+  max-height: 52vh;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--line);
+}
+.music-player { width: 100%; height: 100%; }
+.music-player iframe { width: 100%; height: 100%; border: 0; }
+
+/* El navegador no deja sonar sin un toque: se pide con claridad. */
+.music-gate {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  text-align: center;
+  background: rgba(10, 5, 20, 0.9);
+  padding: 1rem;
+}
+
+.music-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0.4rem;
+}
+.music-vol {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+.music-vol input[type="range"] { width: clamp(90px, 20vw, 170px); }
+.music-state {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.5rem 0 0;
+}

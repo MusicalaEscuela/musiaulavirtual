@@ -13,6 +13,7 @@ import { loadBiblioteca } from "./biblioteca.js?v=4";
 import { isAuthorizedTeacher } from "./docentes-hub.js?v=3";
 import { personalRoomFor, isAdminEmail } from "./sala.js?v=1";
 import { estadoDeSala, textoCuando, proximaOcurrencia, ABRE_ANTES_MIN } from "./agenda-core.js?v=1";
+import { cargarApiYouTube, idDeYouTube, posicionEsperada } from "./reproductor.js?v=1";
 
 const NOTES = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si"];
 const STORAGE_KEY = "musiaula_prototipo_v2";
@@ -719,7 +720,7 @@ function bindDom() {
     "stageArea", "stageNote", "btnStageNote", "btnStageSeq", "btnStageQuiz",
     "btnStagePulse", "btnStageCelebrate", "btnStageClear",
     "btnStagePiano", "btnStageGuitar", "btnStageBass", "btnStageViolin", "btnStageDrums",
-    "btnStageTuner", "btnStageBoard",
+    "btnStageTuner", "btnStageBoard", "btnStageMusic",
     "btnStageSimon", "btnStageEar", "btnStageMatch", "btnStageCountdown",
     "videoArea", "videoGrid", "remotePlaceholder", "localVideo",
     "toggleMic", "toggleCam", "toggleMusicMode", "toggleSpeaker", "audioModeChip",
@@ -925,6 +926,11 @@ function setupEvents() {
   dom.btnStageBoard.addEventListener("click", () => {
     launchStage({ kind: "board", id: cryptoId(), title: "Pizarrón 🖍️" });
     toast("Pizarrón abierto. Los dos pueden dibujar.");
+  });
+
+  dom.btnStageMusic.addEventListener("click", () => {
+    launchStage({ kind: "music", title: "Música 🎵" });
+    toast("Reproductor abierto. Pega un enlace de YouTube y suena en ambos.");
   });
 
   dom.btnStageViolin.addEventListener("click", () => {
@@ -2335,6 +2341,7 @@ function renderStage() {
   clearGameTimers();
   clearAnnotations();
   stopTuner();
+  limpiarMusica();
 
   const stage = appState.stage;
   if (!stage) {
@@ -2344,7 +2351,7 @@ function renderStage() {
     return;
   }
 
-  setFocusMode(stage.kind === "resource" || stage.kind === "board");
+  setFocusMode(stage.kind === "resource" || stage.kind === "board" || stage.kind === "music");
   dom.stageArea.classList.remove("hidden");
   const isTeacher = appState.role === "docente";
   const closeButton = isTeacher
@@ -2418,6 +2425,7 @@ function renderStage() {
 
   if (stage.kind === "resource") renderResourceStage(stage, isTeacher, closeButton);
   if (stage.kind === "board") renderBoardStage(stage, isTeacher, closeButton);
+  if (stage.kind === "music") renderMusicStage(stage, isTeacher, closeButton);
 
   if (stage.kind === "instrument") renderInstrumentStage(stage, isTeacher, closeButton);
   if (stage.kind === "tuner") renderTunerStage(stage, closeButton);
@@ -3432,6 +3440,233 @@ function panelDeRecurso({ material, lado }, isTeacher, dobles) {
       ${!media && !url ? `<p class="stage-hint">Este recurso no tiene enlace para mostrar.</p>` : ""}
     </section>
   `;
+}
+
+
+/* ===== Reproductor de música sincronizado =====
+   Cada dispositivo reproduce la canción por su cuenta; por la base de datos
+   solo viaja la posición. Así suena con calidad completa en ambos lados, no
+   gasta internet extra y no hay que compartir pantalla ni poner el celular
+   junto al micrófono. */
+
+let ytPlayer = null;
+let ytUnsub = null;
+let ytDriftTimer = null;
+let ytEstado = null;      // { videoId, playing, pos, startedAt }
+let ytAplicando = false;  // evita reaccionar a los cambios que provoco yo
+
+function limpiarMusica() {
+  if (ytDriftTimer) clearInterval(ytDriftTimer);
+  ytDriftTimer = null;
+  try { ytUnsub?.(); } catch {}
+  ytUnsub = null;
+  try { ytPlayer?.destroy(); } catch {}
+  ytPlayer = null;
+  ytEstado = null;
+}
+
+function renderMusicStage(stage, isTeacher, closeButton) {
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <button class="stage-focus-toggle secondary tiny" data-focus-toggle>${focusCollapsed ? "⛶ Pantalla completa" : "⤢ Ver cámaras"}</button>
+    <p class="label">${escapeHtml(stage.title || "Música")}</p>
+
+    ${isTeacher ? `
+      <form class="music-search" data-music-form>
+        <input data-music-url type="text" placeholder="Pega aquí el enlace de YouTube" />
+        <button type="submit" class="primary tiny">Poner</button>
+      </form>
+      <p class="hint">Busca la canción en YouTube, copia el enlace y pégalo aquí. Suena en los dos dispositivos a la vez y sincronizada, sin compartir pantalla.</p>
+    ` : `<p class="hint">El profe controla la música. Suena en tu dispositivo directamente.</p>`}
+
+    <div class="music-box">
+      <div id="ytHost" class="music-player"></div>
+      <div class="music-gate hidden" data-music-gate>
+        <button class="primary" data-music-unlock>▶ Tocar para escuchar</button>
+        <p class="hint">Tu navegador pide un toque antes de dejar sonar la música.</p>
+      </div>
+    </div>
+
+    <div class="music-bar">
+      ${isTeacher ? `
+        <button class="secondary tiny" data-music-toggle>⏯️ Reproducir / Pausa</button>
+        <button class="ghost tiny" data-music-back>⏪ 10 s</button>
+        <button class="ghost tiny" data-music-restart>⟲ Desde el inicio</button>
+      ` : ""}
+      <label class="music-vol">🔉 Volumen (solo tuyo)
+        <input data-music-vol type="range" min="0" max="100" step="5" value="80" />
+      </label>
+    </div>
+    <p class="music-state" data-music-state>Sin canción todavía.</p>
+  `;
+
+  const focusBtn = dom.stageArea.querySelector("[data-focus-toggle]");
+  focusBtn?.addEventListener("click", () => {
+    focusCollapsed = !focusCollapsed;
+    applyFocus();
+    focusBtn.textContent = focusCollapsed ? "⛶ Pantalla completa" : "⤢ Ver cámaras";
+  });
+
+  montarReproductor(isTeacher);
+}
+
+async function montarReproductor(isTeacher) {
+  const estadoEl = dom.stageArea.querySelector("[data-music-state]");
+  const gate = dom.stageArea.querySelector("[data-music-gate]");
+  const volEl = dom.stageArea.querySelector("[data-music-vol]");
+
+  const aplicarVolumen = () => {
+    try { ytPlayer?.setVolume(Number(volEl?.value ?? 80)); } catch {}
+  };
+
+  let YT;
+  try {
+    YT = await cargarApiYouTube();
+  } catch {
+    if (estadoEl) estadoEl.textContent = "No se pudo cargar YouTube en este dispositivo.";
+    return;
+  }
+  // Puede que hayan cambiado de escenario mientras cargaba la API.
+  if (!dom.stageArea.querySelector("#ytHost")) return;
+
+  ytPlayer = new YT.Player("ytHost", {
+    height: "100%",
+    width: "100%",
+    playerVars: { controls: isTeacher ? 1 : 0, rel: 0, modestbranding: 1, playsinline: 1 },
+    events: {
+      onReady: () => {
+        aplicarVolumen();
+        if (ytEstado) sincronizarConEstado(true);
+      },
+      onStateChange: e => {
+        // Si el navegador bloqueó el arranque, se ofrece el toque.
+        if (e.data === YT.PlayerState.UNSTARTED && ytEstado?.playing) {
+          gate?.classList.remove("hidden");
+        }
+        if (e.data === YT.PlayerState.PLAYING) gate?.classList.add("hidden");
+      }
+    }
+  });
+
+  volEl?.addEventListener("input", aplicarVolumen);
+
+  dom.stageArea.querySelector("[data-music-unlock]")?.addEventListener("click", () => {
+    gate?.classList.add("hidden");
+    sincronizarConEstado(true);
+    try { ytPlayer?.playVideo(); } catch {}
+  });
+
+  // Todos escuchan el estado compartido.
+  if (firebaseReady && roomPath) {
+    ytUnsub = listen(ref(db, `${roomPath}/player`), snap => {
+      ytEstado = snap.val();
+      pintarEstadoMusica();
+      if (!ytAplicando) sincronizarConEstado(true);
+    });
+  }
+
+  // Corrección de deriva: los relojes y los búferes se separan solos.
+  ytDriftTimer = setInterval(() => {
+    sincronizarConEstado(false);
+    pintarEstadoMusica();
+  }, 3000);
+
+  if (!isTeacher) return;
+
+  /* --- Controles del docente --- */
+  const form = dom.stageArea.querySelector("[data-music-form]");
+  form?.addEventListener("submit", event => {
+    event.preventDefault();
+    const campo = form.querySelector("[data-music-url]");
+    const id = idDeYouTube(campo.value);
+    if (!id) {
+      toast("Ese enlace no es de YouTube. Copia el enlace del video.");
+      return;
+    }
+    publicarMusica({ videoId: id, playing: true, pos: 0 });
+    campo.value = "";
+  });
+
+  dom.stageArea.querySelector("[data-music-toggle]")?.addEventListener("click", () => {
+    if (!ytEstado?.videoId) return;
+    publicarMusica({
+      videoId: ytEstado.videoId,
+      playing: !ytEstado.playing,
+      pos: posicionEsperada(ytEstado, serverNow())
+    });
+  });
+
+  dom.stageArea.querySelector("[data-music-back]")?.addEventListener("click", () => {
+    if (!ytEstado?.videoId) return;
+    publicarMusica({
+      videoId: ytEstado.videoId,
+      playing: ytEstado.playing,
+      pos: Math.max(0, posicionEsperada(ytEstado, serverNow()) - 10)
+    });
+  });
+
+  dom.stageArea.querySelector("[data-music-restart]")?.addEventListener("click", () => {
+    if (!ytEstado?.videoId) return;
+    publicarMusica({ videoId: ytEstado.videoId, playing: true, pos: 0 });
+  });
+}
+
+function publicarMusica({ videoId, playing, pos }) {
+  const estado = {
+    videoId,
+    playing: !!playing,
+    pos: Math.max(0, pos || 0),
+    startedAt: serverNow(),
+    by: CLIENT_ID
+  };
+  ytEstado = estado;
+  ytAplicando = true;
+  sincronizarConEstado(true);
+  pintarEstadoMusica();
+  if (firebaseReady && roomPath) {
+    set(ref(db, `${roomPath}/player`), estado).catch(() => {});
+  }
+  setTimeout(() => { ytAplicando = false; }, 400);
+}
+
+/* Pone el reproductor donde toca. `forzar` es para los cambios (cargar otra
+   canción, play o pausa); sin forzar solo corrige si se ha ido lejos, para no
+   dar saltos cada tres segundos. */
+function sincronizarConEstado(forzar) {
+  if (!ytPlayer || !ytEstado?.videoId) return;
+  const esperada = posicionEsperada(ytEstado, serverNow());
+
+  try {
+    const cargado = ytPlayer.getVideoData?.().video_id;
+    if (cargado !== ytEstado.videoId) {
+      if (ytEstado.playing) ytPlayer.loadVideoById(ytEstado.videoId, esperada);
+      else ytPlayer.cueVideoById(ytEstado.videoId, esperada);
+      return;
+    }
+
+    const actual = ytPlayer.getCurrentTime?.() || 0;
+    // Segundo y medio de diferencia ya se nota al tocar encima.
+    if (forzar || Math.abs(actual - esperada) > 1.5) ytPlayer.seekTo(esperada, true);
+
+    const estadoYT = ytPlayer.getPlayerState?.();
+    if (ytEstado.playing && estadoYT !== 1) ytPlayer.playVideo();
+    if (!ytEstado.playing && estadoYT === 1) ytPlayer.pauseVideo();
+  } catch {
+    /* El reproductor aún no está listo: el temporizador lo reintenta. */
+  }
+}
+
+function pintarEstadoMusica() {
+  const el = dom.stageArea.querySelector("[data-music-state]");
+  if (!el) return;
+  if (!ytEstado?.videoId) {
+    el.textContent = "Sin canción todavía.";
+    return;
+  }
+  const pos = Math.floor(posicionEsperada(ytEstado, serverNow()));
+  const mm = String(Math.floor(pos / 60)).padStart(2, "0");
+  const ss = String(pos % 60).padStart(2, "0");
+  el.textContent = `${ytEstado.playing ? "▶ Sonando" : "⏸ En pausa"} · ${mm}:${ss} · suena en los dos dispositivos`;
 }
 
 /* ===== Pizarrón =====
