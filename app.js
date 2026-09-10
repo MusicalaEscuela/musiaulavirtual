@@ -3038,11 +3038,23 @@ function renderResources() {
       <div class="actions wrap">
         <button class="primary tiny" data-activate-resource="${resource.id}">Activar</button>
         ${url ? `<button class="secondary tiny" data-project-resource="${resource.id}">▶ Proyectar</button>` : ""}
+        ${url ? `<button class="ghost tiny" data-project-beside="${resource.id}" title="Lo abre junto al material que ya está proyectado">⊞ Al lado</button>` : ""}
         <button class="ghost tiny" data-delete-resource="${resource.id}">Eliminar</button>
       </div>
     </article>
   `;
   }).join("");
+
+  dom.resourceList.querySelectorAll("[data-project-beside]").forEach(button => {
+    button.addEventListener("click", () => {
+      const resource = appState.resources.find(item => item.id === button.dataset.projectBeside);
+      // El enlace vive dentro de la descripción, no en un campo propio: se
+      // extrae igual que en "Proyectar" para no divergir de aquel.
+      const url = (String(resource?.desc || "").match(/https?:\/\/[^\s]+/) || [])[0];
+      if (!resource || !url) return;
+      projectResource(resource.title, url, { alLado: true });
+    });
+  });
 
   dom.resourceList.querySelectorAll("[data-project-resource]").forEach(button => {
     button.addEventListener("click", () => {
@@ -3170,6 +3182,7 @@ function renderBiblioteca() {
           <div class="biblio-link">
             <span class="biblio-link-name" title="${escapeHtml(enlace.url)}">${escapeHtml(enlace.titulo || linkHost(enlace.url))}</span>
             <button class="primary tiny" data-biblio-project="${escapeHtml(item.id)}" data-link-index="${index}" title="Se abre en grande para los dos al mismo tiempo">📺 Ver juntos</button>
+            <button class="ghost tiny" data-biblio-beside="${escapeHtml(item.id)}" data-link-index="${index}" title="Lo abre junto al material que ya está proyectado">⊞ Al lado</button>
           </div>
         `).join("");
 
@@ -3189,6 +3202,14 @@ function renderBiblioteca() {
     dom.biblioStatus.textContent = `${matches.length} de ${biblioItems.length} recursos`;
   }
 
+  dom.biblioList.querySelectorAll("[data-biblio-beside]").forEach(button => {
+    button.addEventListener("click", () => {
+      const item = biblioItems.find(x => String(x.id) === button.dataset.biblioBeside);
+      const enlace = item?.enlaces?.[Number(button.dataset.linkIndex) || 0];
+      if (item && enlace) projectResource(item.titulo, enlace.url, { alLado: true });
+    });
+  });
+
   dom.biblioList.querySelectorAll("[data-biblio-project]").forEach(button => {
     button.addEventListener("click", () => {
       const item = biblioItems.find(i => i.id === button.dataset.biblioProject);
@@ -3201,18 +3222,33 @@ function renderBiblioteca() {
 }
 
 // Lanza un recurso al escenario de ambos participantes.
-function projectResource(title, url) {
+function projectResource(title, url, { alLado = false } = {}) {
   const clean = safeUrl(url);
   if (!clean) {
     toast("Ese enlace no se puede proyectar.");
     return;
   }
-  launchStage({
-    kind: "resource",
-    title,
-    url: clean,
-    embed: buildResourceEmbed(clean)
-  });
+
+  const material = { title, url: clean, embed: buildResourceEmbed(clean) };
+
+  // "Al lado" solo tiene sentido si ya hay un recurso proyectado; si no, se
+  // comporta como proyectar normal en vez de no hacer nada.
+  const actual = appState.stage;
+  if (alLado && actual?.kind === "resource") {
+    launchStage({
+      kind: "resource",
+      // Se conserva el id para no perder los trazos ya dibujados encima.
+      id: actual.id,
+      title: actual.title,
+      url: actual.url,
+      embed: actual.embed,
+      extra: material
+    });
+    toast("Los dos materiales quedan lado a lado.");
+    return;
+  }
+
+  launchStage({ kind: "resource", ...material });
   toast("Recurso proyectado en el escenario de ambos.");
 }
 
@@ -3270,12 +3306,83 @@ function buildResourceEmbed(url) {
 }
 
 function renderResourceStage(stage, isTeacher, closeButton) {
-  const url = safeUrl(stage.url);
-  const embed = stage.embed;
+  const focusToggle = `<button class="stage-focus-toggle secondary tiny" data-focus-toggle>${focusCollapsed ? "⛶ Pantalla completa" : "⤢ Ver cámaras"}</button>`;
+  const dobles = !!stage.extra;
+
+  const paneles = [
+    { material: stage, canal: dobles ? `${stage.id}-a` : stage.id, lado: "a" },
+    ...(dobles ? [{ material: stage.extra, canal: `${stage.id}-b`, lado: "b" }] : [])
+  ];
+
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    ${focusToggle}
+    <p class="label">${dobles ? "Dos materiales" : "Recurso de la biblioteca"}</p>
+    <div class="stage-split${dobles ? " dos" : ""}">
+      ${paneles.map(p => panelDeRecurso(p, isTeacher, dobles)).join("")}
+    </div>
+  `;
+
+  const focusBtn = dom.stageArea.querySelector("[data-focus-toggle]");
+  focusBtn?.addEventListener("click", () => {
+    focusCollapsed = !focusCollapsed;
+    applyFocus();
+    focusBtn.textContent = focusCollapsed ? "⛶ Pantalla completa" : "⤢ Ver cámaras";
+  });
+
+  // Cerrar un panel deja el otro solo, ocupando todo el ancho.
+  dom.stageArea.querySelectorAll("[data-close-pane]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const queda = btn.dataset.closePane === "a" ? stage.extra : stage;
+      launchStage({
+        kind: "resource",
+        title: queda.title,
+        url: queda.url,
+        embed: queda.embed
+      });
+    });
+  });
+
+  // Cada panel monta su propio lienzo y su propio canal de trazos.
+  paneles.forEach(p => {
+    const raiz = dom.stageArea.querySelector(`[data-pane="${p.lado}"]`);
+    if (raiz && raiz.querySelector("[data-annot-media]")) {
+      setupResourceAnnotations(stage, isTeacher, { raiz, annotId: p.canal });
+    }
+  });
+}
+
+
+/* Aviso honesto de qué ve el estudiante, según el tipo de material.
+   No todos se comportan igual y un aviso genérico sería falso la mitad de
+   las veces: una imagen sí se ve igual en ambos; un video lo controla cada
+   quien; una web o un PDF van cada uno por su lado porque el navegador no
+   deja leer ni mover el interior de una página de otro dominio. */
+function notaDeSincronia(embed) {
+  const tipo = embed?.type;
+
+  if (tipo === "image") {
+    return { clase: "ok", texto: "La imagen se ve completa en ambas pantallas: aquí sí están viendo lo mismo. Si haces zoom en tu navegador, eso solo lo ves tú." };
+  }
+
+  if (tipo === "youtube" || tipo === "vimeo") {
+    return { clase: "aviso", texto: "Cada quien controla su reproducción: si adelantas o pausas, al estudiante no le pasa lo mismo. Acuerden en voz alta el minuto, o comparte pantalla 🖥️ para que vean lo mismo." };
+  }
+
+  if (!tipo) return null;
+
+  // PDF, documentos y páginas web: todo lo que va dentro de un iframe ajeno.
+  return { clase: "aviso", texto: "Lo que ves aquí es TU vista: si bajas, cambias de página o haces zoom, el estudiante sigue donde estaba. Para que vea exactamente lo tuyo, comparte pantalla 🖥️. Lo que sí ve al instante es lo que dibujes o señales encima." };
+}
+
+// Un material dentro del escenario: su visor, sus herramientas y su enlace.
+function panelDeRecurso({ material, lado }, isTeacher, dobles) {
+  const url = safeUrl(material.url);
+  const embed = material.embed;
   let media = "";
 
   if (embed?.type === "image" && safeUrl(embed.src)) {
-    media = `<img class="stage-img" src="${escapeHtml(embed.src)}" alt="${escapeHtml(stage.title || "Recurso")}" />`;
+    media = `<img class="stage-img" src="${escapeHtml(embed.src)}" alt="${escapeHtml(material.title || "Recurso")}" />`;
   } else if (embed?.src && safeUrl(embed.src)) {
     media = `
       <div class="stage-embed">
@@ -3284,58 +3391,48 @@ function renderResourceStage(stage, isTeacher, closeButton) {
     `;
   }
 
-  const soundNote = embed?.type === "youtube"
-    ? " · El video suena en cada dispositivo por separado."
-    : "";
-
-  // Páginas genéricas (no YouTube/Drive/Docs/Vimeo/Canva/imagen/PDF): el sitio
-  // podría bloquear la incrustación y verse en blanco. Avisamos con un plan B.
+  const soundNote = embed?.type === "youtube" ? " · El video suena en cada dispositivo por separado." : "";
   const genericEmbed = embed?.type === "iframe" && embed.src === url;
   const blockNote = genericEmbed
     ? `<p class="stage-hint">¿Se ve en blanco? Este sitio no permite mostrarse aquí. Ábranlo los dos con el botón de abajo. 👇</p>`
     : "";
 
-  const toolsRow = isTeacher && media ? `
+  const tools = isTeacher && media ? `
     <div class="annot-tools" data-annot-tools>
       <button class="secondary tiny" data-tool="pointer" title="El estudiante ve tu dedo moverse sobre el recurso">👆 Señalar</button>
       <button class="secondary tiny" data-tool="draw" title="Dibuja encima y el estudiante lo ve en vivo">✏️ Dibujar</button>
       <button class="ghost tiny" data-annot-clear>🧽 Limpiar</button>
     </div>
-    <p class="hint annot-hint">Con Señalar o Dibujar activo, el documento/video no recibe clics: vuelve a tocar la herramienta para desactivarla.</p>
   ` : "";
 
-  const focusToggle = `<button class="stage-focus-toggle secondary tiny" data-focus-toggle>${focusCollapsed ? "⛶ Pantalla completa" : "⤢ Ver cámaras"}</button>`;
+  const sync = isTeacher && media ? notaDeSincronia(embed) : null;
+  const notaSync = sync ? `<p class="sync-note ${sync.clase}">${escapeHtml(sync.texto)}</p>` : "";
 
-  dom.stageArea.innerHTML = `
-    ${closeButton}
-    ${focusToggle}
-    <p class="label">Recurso de la biblioteca</p>
-    <h2 class="stage-resource-title">${escapeHtml(stage.title || "Recurso")}</h2>
-    ${media ? `
-      <div class="stage-media" data-annot-media>
-        ${media}
-        <canvas class="annot-canvas" data-annot-canvas></canvas>
-        <div class="annot-pointer hidden" data-annot-pointer>👆</div>
-      </div>
-    ` : ""}
-    ${toolsRow}
-    ${blockNote}
-    ${url ? `<p class="stage-hint"><a class="stage-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Abrir en pestaña nueva ↗</a>${soundNote}</p>` : ""}
-    ${!media && !url ? `<p class="stage-hint">Este recurso no tiene enlace para mostrar.</p>` : ""}
+  const cerrar = isTeacher && dobles
+    ? `<button class="ghost tiny pane-close" data-close-pane="${lado}" title="Dejar solo el otro material">✕</button>`
+    : "";
+
+  return `
+    <section class="stage-pane" data-pane="${lado}">
+      <header class="pane-head">
+        <h3 class="stage-resource-title">${escapeHtml(material.title || "Recurso")}</h3>
+        ${cerrar}
+      </header>
+      ${media ? `
+        <div class="stage-media" data-annot-media>
+          ${media}
+          <canvas class="annot-canvas" data-annot-canvas></canvas>
+          <div class="annot-pointer hidden" data-annot-pointer>👆</div>
+        </div>
+      ` : ""}
+      ${tools}
+      ${notaSync}
+      ${blockNote}
+      ${url ? `<p class="stage-hint"><a class="stage-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Abrir en pestaña nueva ↗</a>${soundNote}</p>` : ""}
+      ${!media && !url ? `<p class="stage-hint">Este recurso no tiene enlace para mostrar.</p>` : ""}
+    </section>
   `;
-
-  const focusBtn = dom.stageArea.querySelector("[data-focus-toggle]");
-  if (focusBtn) {
-    focusBtn.addEventListener("click", () => {
-      focusCollapsed = !focusCollapsed;
-      applyFocus();
-      focusBtn.textContent = focusCollapsed ? "⛶ Pantalla completa" : "⤢ Ver cámaras";
-    });
-  }
-
-  if (media) setupResourceAnnotations(stage, isTeacher);
 }
-
 
 /* ===== Pizarrón =====
    Reusa el mismo motor de trazos que las anotaciones sobre recursos: las
@@ -3393,8 +3490,6 @@ function renderBoardStage(stage, isTeacher, closeButton) {
    normalizadas (0..1), así se ven bien en pantallas de distinto tamaño. */
 
 let annotUnsubs = [];
-let annotStrokes = new Map(); // strokeId -> { pts: [{x,y}, ...] }
-let annotTool = null;
 let annotColor = "#e0218a"; // color del trazo actual, se manda con cada segmento
 
 
@@ -3587,15 +3682,22 @@ function setFocusMode(on) {
 function clearAnnotations() {
   annotUnsubs.forEach(unsub => { try { unsub(); } catch {} });
   annotUnsubs = [];
-  annotStrokes = new Map();
-  annotTool = null;
 }
 
-function setupResourceAnnotations(stage, isTeacher) {
-  const media = dom.stageArea.querySelector("[data-annot-media]");
-  const canvas = dom.stageArea.querySelector("[data-annot-canvas]");
-  const pointerEl = dom.stageArea.querySelector("[data-annot-pointer]");
+/* raiz: el trozo de pantalla donde vive ESTE lienzo (con dos materiales hay
+   dos, cada uno con sus herramientas). annotId: el canal de trazos en la base
+   de datos, distinto por panel para que no se pisen. */
+function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
+  const zona = raiz || dom.stageArea;
+  const canal = annotId || stage.id;
+  const media = zona.querySelector("[data-annot-media]");
+  const canvas = zona.querySelector("[data-annot-canvas]");
+  const pointerEl = zona.querySelector("[data-annot-pointer]");
   if (!media || !canvas) return;
+
+  // Los trazos son de este lienzo, no de la aplicación entera: con dos
+  // materiales abiertos, cada uno lleva los suyos.
+  let annotStrokes = new Map();
 
   const ctx = canvas.getContext("2d");
   const INK = "#e0218a";
@@ -3645,7 +3747,7 @@ function setupResourceAnnotations(stage, isTeacher) {
 
   // Todos escuchan los trazos y el puntero del otro lado.
   if (firebaseReady && roomPath) {
-    const eventsRef = ref(db, `${roomPath}/annot/${stage.id}/events`);
+    const eventsRef = ref(db, `${roomPath}/annot/${canal}/events`);
     annotUnsubs.push(onChildAdded(eventsRef, snap => {
       const ev = snap.val();
       if (!ev) return;
@@ -3667,7 +3769,7 @@ function setupResourceAnnotations(stage, isTeacher) {
       }
     }));
 
-    const pointerRef = ref(db, `${roomPath}/annot/${stage.id}/pointer`);
+    const pointerRef = ref(db, `${roomPath}/annot/${canal}/pointer`);
     annotUnsubs.push(onValue(pointerRef, snap => {
       const p = snap.val();
       if (!p || !p.on || p.by === CLIENT_ID) {
@@ -3683,16 +3785,17 @@ function setupResourceAnnotations(stage, isTeacher) {
   if (!isTeacher) return;
 
   /* --- Herramientas del docente --- */
-  const tools = dom.stageArea.querySelector("[data-annot-tools]");
+  const tools = zona.querySelector("[data-annot-tools]");
   if (!tools) return;
 
   const sendPointer = pos => {
     if (!firebaseReady || !roomPath) return;
-    set(ref(db, `${roomPath}/annot/${stage.id}/pointer`),
+    set(ref(db, `${roomPath}/annot/${canal}/pointer`),
       pos ? { ...pos, on: true, by: CLIENT_ID } : { on: false, by: CLIENT_ID }
     ).catch(() => {});
   };
 
+  let annotTool = null; // la herramienta es de este lienzo, no compartida
   const setTool = tool => {
     annotTool = annotTool === tool ? null : tool;
     syncSize();
@@ -3715,7 +3818,7 @@ function setupResourceAnnotations(stage, isTeacher) {
     annotStrokes = new Map();
     redraw();
     if (firebaseReady && roomPath) {
-      push(ref(db, `${roomPath}/annot/${stage.id}/events`), { kind: "clear", by: CLIENT_ID }).catch(() => {});
+      push(ref(db, `${roomPath}/annot/${canal}/events`), { kind: "clear", by: CLIENT_ID }).catch(() => {});
     }
   });
 
@@ -3733,7 +3836,7 @@ function setupResourceAnnotations(stage, isTeacher) {
   const flushStroke = () => {
     if (!stroke || !stroke.pending.length) return;
     if (firebaseReady && roomPath) {
-      push(ref(db, `${roomPath}/annot/${stage.id}/events`), {
+      push(ref(db, `${roomPath}/annot/${canal}/events`), {
         kind: "seg", strokeId: stroke.id, by: CLIENT_ID, pts: stroke.pending,
         color: stroke.color, grosor: stroke.grosor
       }).catch(() => {});

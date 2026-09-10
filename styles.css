@@ -2085,3 +2085,41 @@ body.mode-danza .music-only { display: none !important; }
   border: 1px solid rgba(255, 255, 255, 0.35);
 }
 .ink-btn.on { border-color: #fff; transform: scale(1.08); }
+
+/* ===== Dos materiales lado a lado ===== */
+.stage-split { display: grid; gap: 14px; }
+.stage-split.dos { grid-template-columns: 1fr 1fr; }
+/* En pantallas angostas se apilan: media pantalla de ancho no sirve de nada. */
+@media (max-width: 820px) {
+  .stage-split.dos { grid-template-columns: minmax(0, 1fr); }
+}
+.stage-pane { min-width: 0; }
+.pane-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pane-head .stage-resource-title { margin: 0 0 0.4rem; font-size: 1rem; }
+.pane-close { padding: 0.2rem 0.5rem; min-height: 26px; }
+.stage-split.dos .stage-embed { max-height: 46vh; }
+.stage-split.dos .stage-img { max-height: 46vh; }
+.focus-mode .stage-split.dos .stage-embed,
+.focus-mode .stage-split.dos .stage-img { max-height: 62vh; }
+
+/* Aviso de qué ve realmente el estudiante (solo para el docente) */
+.sync-note {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+.sync-note.aviso {
+  background: rgba(255, 190, 90, 0.13);
+  border: 1px solid rgba(255, 190, 90, 0.4);
+}
+.sync-note.ok {
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+}
