@@ -467,14 +467,40 @@ textarea:focus {
   gap: 10px;
 }
 
+/* Cada control lleva su nombre debajo del icono: un emoji solo no dice qué
+   hace, y el docente no debería tener que adivinar ni recordar. */
 .vc-btn {
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  font-size: 1.25rem;
-  background: rgba(0, 0, 0, 0.55);
+  width: auto;
+  min-width: 58px;
+  height: auto;
+  padding: 6px 10px 5px;
+  border-radius: 14px;
+  font-size: 1.15rem;
+  background: rgba(0, 0, 0, 0.62);
   border: 1px solid var(--line);
   backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  line-height: 1.1;
+}
+.vc-ico { font-size: 1.15rem; }
+.vc-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  opacity: 0.92;
+  white-space: nowrap;
+}
+
+/* La barra puede envolverse: caben nueve controles con nombre sin salirse. */
+.video-controls { flex-wrap: wrap; justify-content: center; max-width: 96%; }
+
+@media (max-width: 640px) {
+  .vc-btn { min-width: 50px; padding: 5px 7px 4px; }
+  .vc-ico { font-size: 1rem; }
+  .vc-label { font-size: 0.56rem; }
 }
 
 .vc-btn.off {
@@ -1432,9 +1458,8 @@ hr {
   box-shadow: var(--shadow);
 }
 .focus-mode .video-area .video-controls .vc-btn {
-  width: 44px;
-  height: 44px;
-  font-size: 1rem;
+  min-width: 52px;
+  padding: 4px 8px 3px;
 }
 
 .annot-canvas {
@@ -1966,3 +1991,51 @@ body.mode-danza .music-only { display: none !important; }
 .observer-item-main .hint { margin: 0; font-size: 0.72rem; }
 .observer-item-when { font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
 .observer-live { color: var(--pink-2); font-weight: 700; }
+
+/* ===== Aviso de eco ===== */
+.echo-warning {
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 190, 90, 0.5);
+  background: rgba(255, 190, 90, 0.14);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  margin-bottom: 0.9rem;
+}
+.echo-warning button { margin-top: 0.6rem; }
+
+/* ===== Auxilio remoto ===== */
+.remote-help {
+  padding: 0.8rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.05);
+  margin-bottom: 0.9rem;
+}
+.remote-targets { display: grid; gap: 10px; margin-top: 0.5rem; }
+.remote-target {
+  padding: 0.6rem 0.7rem;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+}
+.remote-target .actions { margin-top: 0.5rem; gap: 6px; }
+.remote-target .tiny { font-size: 0.72rem; padding: 0.35rem 0.6rem; min-height: 28px; }
+
+/* Petición que enciende cámara o micrófono: se acepta, no se impone. */
+.remote-ask {
+  position: fixed;
+  left: 50%;
+  bottom: 90px;
+  transform: translateX(-50%);
+  z-index: 1200;
+  max-width: min(92vw, 460px);
+  padding: 1rem 1.1rem;
+  border-radius: 16px;
+  background: rgba(18, 9, 32, 0.97);
+  border: 1px solid var(--pink-2);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.remote-ask p { margin: 0 0 0.7rem; }
+.remote-ask .actions { justify-content: center; gap: 10px; }

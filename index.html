@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="./logo.png" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=19" />
+  <link rel="stylesheet" href="./styles.css?v=20" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -192,15 +192,33 @@
             <span id="micBoostValue">×1</span>
           </div>
           <div class="video-controls">
-            <button id="toggleMic" class="vc-btn" title="Silenciar micrófono">🎙️</button>
-            <button id="toggleCam" class="vc-btn" title="Apagar cámara">📷</button>
-            <button id="toggleMusicMode" class="vc-btn" title="Modo música: audio sin filtros de voz (usa audífonos)">🎼</button>
-            <button id="toggleSpeaker" class="vc-btn" title="Salida de audio: altavoz o auricular">🔊</button>
-            <button id="shareScreen" class="vc-btn teacher-only" title="Compartir pantalla (tu cámara vuelve al terminar)">🖥️</button>
-            <button id="shareAudioOnly" class="vc-btn teacher-only" title="Compartir SOLO el audio de una pestaña (tu cámara sigue enviándose)">🔈</button>
-            <button id="toggleStats" class="vc-btn" title="Diagnóstico de conexión">📊</button>
-            <button id="reconnectVideo" class="vc-btn teacher-only" title="Reintentar conexión de video">↻</button>
-            <button id="reloadClass" class="vc-btn" title="Botón de emergencia: si la clase se traba, reconecta todo">🚑</button>
+            <button id="toggleMic" class="vc-btn" title="Silenciar o activar tu micrófono">
+              <span class="vc-ico">🎙️</span><span class="vc-label">Micrófono</span>
+            </button>
+            <button id="toggleCam" class="vc-btn" title="Apagar o encender tu cámara">
+              <span class="vc-ico">📷</span><span class="vc-label">Cámara</span>
+            </button>
+            <button id="toggleMusicMode" class="vc-btn" title="Cambia entre modo voz (con cancelación de eco) y modo instrumento (audio fiel, sin filtros)">
+              <span class="vc-ico">🎤</span><span class="vc-label">Modo voz</span>
+            </button>
+            <button id="toggleSpeaker" class="vc-btn" title="Cambiar por dónde sale el sonido: altavoz o auricular">
+              <span class="vc-ico">🔊</span><span class="vc-label">Salida</span>
+            </button>
+            <button id="shareScreen" class="vc-btn teacher-only" title="Compartir tu pantalla (tu cámara vuelve al terminar)">
+              <span class="vc-ico">🖥️</span><span class="vc-label">Pantalla</span>
+            </button>
+            <button id="shareAudioOnly" class="vc-btn teacher-only" title="Compartir SOLO el audio de una pestaña; tu cámara sigue viéndose">
+              <span class="vc-ico">🔈</span><span class="vc-label">Solo audio</span>
+            </button>
+            <button id="toggleStats" class="vc-btn" title="Ver cómo va la conexión: latencia y pérdida de paquetes">
+              <span class="vc-ico">📊</span><span class="vc-label">Conexión</span>
+            </button>
+            <button id="reconnectVideo" class="vc-btn teacher-only" title="Reintentar la conexión de video si alguien no se ve">
+              <span class="vc-ico">↻</span><span class="vc-label">Reconectar</span>
+            </button>
+            <button id="reloadClass" class="vc-btn" title="Si la clase se traba, esto reinicia todo sin perder la sala">
+              <span class="vc-ico">🚑</span><span class="vc-label">Rescate</span>
+            </button>
           </div>
         </div>
       </div>
@@ -313,6 +331,19 @@
             <p class="label">Actividad activa</p>
             <h3 id="activeExerciseTitle">Sin actividad</h3>
             <div id="activeExerciseBody" class="exercise-preview">Lanza un ejercicio desde la pestaña Ejercicio.</div>
+          </div>
+
+          <div id="echoWarning" class="echo-warning hidden">
+            🎧 <strong>Estás en modo instrumento y hay más gente en la sala.</strong>
+            Sin audífonos, tu micrófono vuelve a captar lo que suena por tus parlantes
+            y los demás te oirán doble (y el metrónomo, repetido).
+            <button id="fixEcho" class="secondary tiny">Pasar a modo voz</button>
+          </div>
+
+          <div id="remoteHelp" class="remote-help hidden">
+            <p class="label">Auxilio remoto</p>
+            <p class="hint">Arréglale los controles a quien se atascó. Se le avisa siempre en pantalla.</p>
+            <div id="remoteTargets" class="remote-targets"></div>
           </div>
 
           <div class="live-card">
@@ -454,6 +485,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=30"></script>
+  <script type="module" src="./app.js?v=31"></script>
 </body>
 </html>

@@ -257,6 +257,169 @@ async function setupPersonalRoom(email) {
 
 
 
+
+
+// Lista de a quién se le puede echar una mano. Solo la ve coordinación.
+function renderRemoteHelp() {
+  if (!dom.remoteHelp) return;
+  const puede = isObserver() && isAdminEmail(currentUser?.email);
+  dom.remoteHelp.classList.toggle("hidden", !puede);
+  if (!puede) return;
+
+  const gente = Object.entries(lastParticipants || {})
+    .filter(([id, p]) => id !== CLIENT_ID && p?.role !== "observador");
+
+  if (!gente.length) {
+    dom.remoteTargets.innerHTML = `<p class="hint">Nadie más en la sala todavía.</p>`;
+    return;
+  }
+
+  dom.remoteTargets.innerHTML = gente.map(([id, p]) => `
+    <div class="remote-target">
+      <strong>${escapeHtml(p.name || "Participante")}</strong>
+      <span class="agenda-chip">${escapeHtml(p.role || "")}</span>
+      <div class="actions wrap">
+        ${Object.entries(ACCIONES_REMOTAS).map(([accion, def]) => `
+          <button class="${def.pregunta ? "ghost" : "secondary"} tiny"
+                  data-remote="${escapeHtml(id)}|${accion}">${escapeHtml(def.etiqueta)}</button>
+        `).join("")}
+      </div>
+    </div>
+  `).join("");
+
+  dom.remoteTargets.querySelectorAll("[data-remote]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const [id, accion] = btn.dataset.remote.split("|");
+      enviarAuxilio(id, accion);
+    });
+  });
+}
+
+/* ===== Auxilio remoto =====
+   Coordinación puede arreglarle los controles a un docente o estudiante que
+   se atascó, sin explicárselo por WhatsApp en plena clase.
+
+   Dos reglas de diseño, y no son un detalle:
+
+   1. APAGAR se hace solo; ENCENDER se pide. Silenciar un micrófono, cerrar
+      un modo de audio o cortar una pantalla compartida son acciones que
+      quitan, y se aplican de una. Encender la cámara o el micrófono de otra
+      persona a distancia no: eso convierte una herramienta de apoyo en una
+      de vigilancia, así que llega como una pregunta que la persona acepta.
+
+   2. Nada es silencioso. Toda acción remota se anuncia en la pantalla de
+      quien la recibe, con el nombre de quien la hizo. Que alguien te
+      arregle algo está bien; que te lo cambie sin que lo sepas, no. */
+
+const ACCIONES_REMOTAS = {
+  "modo-voz":      { etiqueta: "Pasar a modo voz",        aviso: "puso tu audio en modo voz" },
+  "modo-instrumento": { etiqueta: "Pasar a modo instrumento", aviso: "puso tu audio en modo instrumento" },
+  "silenciar":     { etiqueta: "Silenciar micrófono",     aviso: "silenció tu micrófono" },
+  "camara-off":    { etiqueta: "Apagar cámara",           aviso: "apagó tu cámara" },
+  "dejar-pantalla":{ etiqueta: "Dejar de compartir",      aviso: "detuvo lo que estabas compartiendo" },
+  "bajar-boost":   { etiqueta: "Bajar volumen instrumento", aviso: "bajó el volumen de tu instrumento" },
+  "subir-metronomo": { etiqueta: "Subir volumen metrónomo", aviso: "subió el volumen de tu metrónomo" },
+  "reconectar":    { etiqueta: "Reconectar video",        aviso: "reinició tu conexión de video" },
+  // Estas dos ENCIENDEN captura: no se aplican solas, se preguntan.
+  "pedir-micro":   { etiqueta: "Pedir que active el micrófono", pregunta: "quiere que actives tu micrófono" },
+  "pedir-camara":  { etiqueta: "Pedir que active la cámara",    pregunta: "quiere que actives tu cámara" }
+};
+
+let remotoUnsub = null;
+
+function escucharAuxilioRemoto() {
+  if (!firebaseReady || !roomPath) return;
+  const buzon = ref(db, `${roomPath}/remote/${CLIENT_ID}`);
+  remove(buzon).catch(() => {});
+  remotoUnsub = listen(buzon, null, snap => {
+    const orden = snap.val();
+    remove(snap.ref).catch(() => {});
+    if (orden?.action) aplicarAuxilio(orden);
+  });
+  unsubscribers.push(() => { try { remotoUnsub?.(); } catch {} });
+}
+
+function aplicarAuxilio(orden) {
+  const def = ACCIONES_REMOTAS[orden.action];
+  if (!def) return;
+  const quien = orden.by || "Coordinación";
+
+  // Lo que enciende captura se pregunta, nunca se hace solo.
+  if (def.pregunta) {
+    mostrarPeticionRemota(orden.action, quien, def.pregunta);
+    return;
+  }
+
+  switch (orden.action) {
+    case "modo-voz":
+      if (musicMode) toggleMusicMode();
+      break;
+    case "modo-instrumento":
+      if (!musicMode) toggleMusicMode();
+      break;
+    case "silenciar":
+      if (micOn) dom.toggleMic?.click();
+      break;
+    case "camara-off":
+      if (camOn) dom.toggleCam?.click();
+      break;
+    case "dejar-pantalla":
+      stopScreenShare(true);
+      stopAudioOnlyShare(true);
+      break;
+    case "bajar-boost":
+      if (dom.micBoost) { dom.micBoost.value = "1"; setMicBoost(1); }
+      break;
+    case "subir-metronomo":
+      if (dom.metroVolume) {
+        dom.metroVolume.value = "0.85";
+        metroVolume = 0.85;
+        localStorage.setItem("musiaula-metro-vol", "0.85");
+      }
+      break;
+    case "reconectar":
+      reconnectAllPeers();
+      break;
+  }
+
+  toast(`🛟 ${quien} ${def.aviso}.`);
+}
+
+// Petición visible y grande: se acepta con un toque, no se cuela.
+function mostrarPeticionRemota(action, quien, texto) {
+  const previa = document.getElementById("remoteAsk");
+  previa?.remove();
+
+  const caja = document.createElement("div");
+  caja.id = "remoteAsk";
+  caja.className = "remote-ask";
+  caja.innerHTML = `
+    <p><strong>${escapeHtml(quien)}</strong> ${escapeHtml(texto)}.</p>
+    <div class="actions">
+      <button class="primary" data-si>Sí, activar</button>
+      <button class="ghost" data-no>Ahora no</button>
+    </div>
+  `;
+  document.body.appendChild(caja);
+
+  caja.querySelector("[data-si]").addEventListener("click", () => {
+    if (action === "pedir-micro" && !micOn) dom.toggleMic?.click();
+    if (action === "pedir-camara" && !camOn) dom.toggleCam?.click();
+    caja.remove();
+  });
+  caja.querySelector("[data-no]").addEventListener("click", () => caja.remove());
+}
+
+// Enviar una orden (solo coordinación observando).
+function enviarAuxilio(targetId, action) {
+  if (!isAdminEmail(currentUser?.email) || !firebaseReady || !roomPath) return;
+  set(ref(db, `${roomPath}/remote/${targetId}`), {
+    action,
+    by: appState.displayName || currentUser?.email || "Coordinación",
+    at: Date.now()
+  }).then(() => toast("Enviado.")).catch(() => toast("No se pudo enviar."));
+}
+
 /* ===== Blindaje del observador =====
    Ocultar los botones con CSS no es una garantía: siguen en el documento y
    sus manejadores siguen vivos. Y hay un camino especialmente peligroso,
@@ -571,7 +734,7 @@ function bindDom() {
     "waitRoom", "waitTitle", "waitWhen", "waitHint", "waitCountdown",
     "metroChip", "metroStateText", "beatIndicatorAula", "meter", "observerChip",
     "metroVolume", "focusToolsBtn", "beatDots", "beatDotsAula",
-    "timingToggle", "timingReadout"
+    "timingToggle", "timingReadout", "echoWarning", "fixEcho", "remoteHelp", "remoteTargets"
   ].forEach(id => dom[id] = document.getElementById(id));
 
   dom.tabs = Array.from(document.querySelectorAll(".tab"));
@@ -797,7 +960,7 @@ function setupEvents() {
     micOn = !micOn;
     localStream?.getAudioTracks().forEach(track => track.enabled = micOn);
     dom.toggleMic.classList.toggle("off", !micOn);
-    dom.toggleMic.textContent = micOn ? "🎙️" : "🔇";
+    setBtn(dom.toggleMic, micOn ? "🎙️" : "🔇", micOn ? "Micrófono" : "Silenciado");
   });
 
   dom.toggleCam.addEventListener("click", () => {
@@ -805,7 +968,7 @@ function setupEvents() {
     camOn = !camOn;
     localStream?.getVideoTracks().forEach(track => track.enabled = camOn);
     dom.toggleCam.classList.toggle("off", !camOn);
-    dom.toggleCam.textContent = camOn ? "📷" : "🚫";
+    setBtn(dom.toggleCam, camOn ? "📷" : "🚫", camOn ? "Cámara" : "Sin cámara");
   });
 
   dom.metroVolume.value = String(metroVolume);
@@ -824,6 +987,10 @@ function setupEvents() {
 
   dom.focusToolsBtn.addEventListener("click", () => {
     document.body.classList.toggle("tools-open");
+  });
+
+  dom.fixEcho.addEventListener("click", () => {
+    if (musicMode) toggleMusicMode();
   });
 
   dom.role.addEventListener("change", syncObserverPanel);
@@ -1013,7 +1180,7 @@ function setMicBoost(value) {
 function renderAudioMode() {
   dom.toggleMusicMode?.classList.toggle("on", musicMode);
   if (dom.toggleMusicMode) {
-    dom.toggleMusicMode.textContent = musicMode ? "🎼" : "🎤";
+    setBtn(dom.toggleMusicMode, musicMode ? "🎼" : "🎤", musicMode ? "Instrumento" : "Modo voz");
     dom.toggleMusicMode.title = musicMode
       ? "Modo instrumento: sin filtros, fiel al instrumento. Toca para volver a voz."
       : "Modo voz: cancelación de eco encendida. Toca para pasar a instrumento.";
@@ -1023,6 +1190,17 @@ function renderAudioMode() {
     dom.audioModeChip.classList.toggle("music", musicMode);
   }
   dom.micBoostBar?.classList.toggle("hidden", !musicMode);
+  renderEchoWarning();
+}
+
+/* El modo instrumento apaga la cancelación de eco: es lo correcto para la
+   fidelidad del instrumento, pero sin audífonos el micrófono vuelve a captar
+   todo lo que suena por los parlantes (voces, metrónomo) y lo reenvía. Con
+   tres dispositivos eso se oye como voces dobles y pulsos repetidos. */
+function renderEchoWarning() {
+  if (!dom.echoWarning) return;
+  const riesgo = musicMode && participantsCount > 1 && !isObserver();
+  dom.echoWarning.classList.toggle("hidden", !riesgo);
 }
 
 /* ===== Mezcla de música (modo baile) =====
@@ -1197,6 +1375,8 @@ async function connectRoom() {
     lastParticipants = snapshot.val() || {};
     participantsCount = Object.keys(lastParticipants).length;
     renderStatusCount();
+    renderRemoteHelp();
+    renderEchoWarning();
     syncPeers();
   });
 
@@ -1214,6 +1394,7 @@ async function connectRoom() {
   });
 
   listenTiming();
+  escucharAuxilioRemoto();
 
   // Vigilancia continua: si algún camino futuro llegara a colar un track, se
   // corta solo en vez de que el observador aparezca sin darse cuenta.
@@ -1336,6 +1517,18 @@ function setStatus(text, online) {
 // debería estar siendo mirado sin saberlo.
 function isObserver() {
   return appState.role === "observador";
+}
+
+
+// Los botones llevan icono Y rótulo: cambiar el icono no debe borrar el
+// nombre. Sin nombre nadie sabe qué hace cada botón, que es justo el
+// problema que se quiere resolver.
+function setBtn(el, icono, rotulo) {
+  if (!el) return;
+  const i = el.querySelector(".vc-ico");
+  const r = el.querySelector(".vc-label");
+  if (i) i.textContent = icono;
+  if (r && rotulo) r.textContent = rotulo;
 }
 
 function renderStatusCount() {
@@ -1704,7 +1897,7 @@ async function toggleScreenShare() {
 
   dom.localVideo.srcObject = screenStream;
   dom.shareScreen.classList.add("on");
-  dom.shareScreen.textContent = "⏹";
+  setBtn(dom.shareScreen, "⏹", "Dejar pantalla");
   // El navegador tiene su propio botón "Dejar de compartir": lo escuchamos.
   screenTrack.onended = () => stopScreenShare();
   toast(sent
@@ -1760,7 +1953,7 @@ async function toggleAudioOnlyShare() {
   audioOnlyStream = stream;
   startMusicMix(tabAudio);
   dom.shareAudioOnly.classList.add("on");
-  dom.shareAudioOnly.textContent = "⏹";
+  setBtn(dom.shareAudioOnly, "⏹", "Dejar audio");
   tabAudio.onended = () => stopAudioOnlyShare();
   toast("🔈 Compartiendo solo el audio. Tu cámara sigue en clase.");
 }
@@ -1771,7 +1964,7 @@ function stopAudioOnlyShare(silent = false) {
   audioOnlyStream.getTracks().forEach(track => track.stop());
   audioOnlyStream = null;
   dom.shareAudioOnly?.classList.remove("on");
-  if (dom.shareAudioOnly) dom.shareAudioOnly.textContent = "🔈";
+  setBtn(dom.shareAudioOnly, "🔈", "Solo audio");
   if (!silent) toast("Dejaste de compartir el audio.");
 }
 
@@ -1788,7 +1981,7 @@ function stopScreenShare(silent = false) {
 
   if (dom.localVideo) dom.localVideo.srcObject = localStream;
   dom.shareScreen?.classList.remove("on");
-  if (dom.shareScreen) dom.shareScreen.textContent = "🖥️";
+  setBtn(dom.shareScreen, "🖥️", "Pantalla");
   if (!silent) toast("Dejaste de compartir pantalla. Cámara de vuelta.");
 }
 
