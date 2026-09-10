@@ -256,6 +256,74 @@ async function setupPersonalRoom(email) {
 
 
 
+
+/* ===== Blindaje del observador =====
+   Ocultar los botones con CSS no es una garantía: siguen en el documento y
+   sus manejadores siguen vivos. Y hay un camino especialmente peligroso,
+   toggleMusicMode, que pide el micrófono de nuevo para cambiar de modo.
+
+   Aquí se cierran cinco puertas, de la más profunda a la más superficial.
+   La primera es la que de verdad manda: se anulan las funciones del
+   navegador que abren cámara y micrófono, de modo que NINGÚN camino del
+   código —ni uno que se agregue mañana por error— pueda encenderlas. */
+
+let mediosBlindados = false;
+
+function blindarMedios() {
+  if (mediosBlindados || !navigator.mediaDevices) return;
+  mediosBlindados = true;
+
+  const negar = motivo => () =>
+    Promise.reject(new DOMException(motivo, "NotAllowedError"));
+
+  try {
+    navigator.mediaDevices.getUserMedia = negar(
+      "Modo observador: la cámara y el micrófono están bloqueados."
+    );
+    navigator.mediaDevices.getDisplayMedia = negar(
+      "Modo observador: compartir pantalla está bloqueado."
+    );
+  } catch (error) {
+    // Si el navegador no deja reemplazarlas, quedan las otras cuatro capas.
+    console.warn("No se pudieron blindar los medios", error);
+  }
+
+  // Los botones no se esconden: se van del documento. Lo que no existe no
+  // se puede pulsar ni por accidente ni con las herramientas del navegador.
+  ["toggleMic", "toggleCam", "toggleMusicMode", "shareScreen", "shareAudioOnly",
+   "reconnectVideo", "micBoostBar", "timingToggle", "localVideo"]
+    .forEach(id => document.getElementById(id)?.remove());
+}
+
+/* Comprobación en vivo: recorre las conexiones y confirma que este
+   dispositivo no está enviando NADA. Si algo se colara, lo corta y avisa en
+   vez de fallar en silencio. Devuelve el detalle para poder revisarlo. */
+function verificarObservadorMudo() {
+  const hallazgos = [];
+
+  peers.forEach(({ pc, id }) => {
+    pc.getSenders().forEach(sender => {
+      if (sender.track) {
+        hallazgos.push(`${sender.track.kind} hacia ${id}`);
+        try { sender.track.stop(); } catch {}
+        sender.replaceTrack(null).catch(() => {});
+      }
+    });
+  });
+
+  if (localStream) {
+    hallazgos.push("stream local abierto");
+    localStream.getTracks().forEach(track => { try { track.stop(); } catch {} });
+    localStream = null;
+  }
+
+  if (hallazgos.length) {
+    console.error("Observador enviando medios:", hallazgos);
+    toast("⚠️ Se detectó envío de medios en modo observador y se cortó.");
+  }
+  return hallazgos;
+}
+
 /* ===== Elegir qué clase observar =====
    Un observador no tiene sala propia: viene a mirar la de otro. Sin esta
    lista tendría que adivinar el nombre del aula ajena, que es justo lo que
@@ -725,6 +793,7 @@ function setupEvents() {
   dom.btnStageClear.addEventListener("click", () => clearStage());
 
   dom.toggleMic.addEventListener("click", () => {
+    if (isObserver()) return;
     micOn = !micOn;
     localStream?.getAudioTracks().forEach(track => track.enabled = micOn);
     dom.toggleMic.classList.toggle("off", !micOn);
@@ -732,6 +801,7 @@ function setupEvents() {
   });
 
   dom.toggleCam.addEventListener("click", () => {
+    if (isObserver()) return;
     camOn = !camOn;
     localStream?.getVideoTracks().forEach(track => track.enabled = camOn);
     dom.toggleCam.classList.toggle("off", !camOn);
@@ -1069,6 +1139,9 @@ async function enterClass({ room, displayName, role }) {
   document.body.classList.toggle("role-docente", appState.role === "docente");
   document.body.classList.toggle("role-observador", isObserver());
 
+  // Se blinda apenas se fija el rol, antes de crear ninguna conexión.
+  if (isObserver()) blindarMedios();
+
   // El tipo de clase lo decide el docente; el estudiante lo recibe por la sala.
   // El observador tampoco lo decide: mira, no manda.
   if (appState.role === "docente") {
@@ -1141,6 +1214,13 @@ async function connectRoom() {
   });
 
   listenTiming();
+
+  // Vigilancia continua: si algún camino futuro llegara a colar un track, se
+  // corta solo en vez de que el observador aparezca sin darse cuenta.
+  if (isObserver()) {
+    const vigia = setInterval(verificarObservadorMudo, 4000);
+    unsubscribers.push(() => clearInterval(vigia));
+  }
 
   // Respuestas: cola compartida, cada una llega una sola vez.
   listen(query(ref(db, `${roomPath}/responses`), limitToLast(30)), null, snap => {
@@ -1325,6 +1405,8 @@ function releaseScreenAwake() {
 
 async function ensureLocalMedia() {
   keepScreenAwake();
+  // El observador no pide cámara ni micrófono, venga de donde venga la llamada.
+  if (isObserver()) return;
   if (localStream) return;
   try {
     localStream = await navigator.mediaDevices.getUserMedia({
@@ -1378,7 +1460,10 @@ function createPeerFor(id, info = {}, { asOfferer = false } = {}) {
   };
   peers.set(id, entry);
 
-  localStream?.getTracks().forEach(track => pc.addTrack(track, localStream));
+  // El observador nunca añade tracks, exista o no un stream local.
+  if (!isObserver()) {
+    localStream?.getTracks().forEach(track => pc.addTrack(track, localStream));
+  }
 
   // Sin tracks propios no habría nada que negociar y la conexión llegaría
   // muda y a oscuras. Al ofrecer hay que pedir explícitamente "solo recibir".
@@ -1394,11 +1479,11 @@ function createPeerFor(id, info = {}, { asOfferer = false } = {}) {
 
   // Si ya estoy compartiendo pantalla o música, quien entra tarde recibe
   // esos tracks en lugar de la cámara y el micrófono puros.
-  const screenTrack = screenStream?.getVideoTracks()[0];
+  const screenTrack = isObserver() ? null : screenStream?.getVideoTracks()[0];
   if (screenTrack) {
     pc.getSenders().find(s => s.track?.kind === "video")?.replaceTrack(screenTrack).catch(() => {});
   }
-  const mixedTrack = musicMixer?.dest.stream.getAudioTracks()[0];
+  const mixedTrack = isObserver() ? null : musicMixer?.dest.stream.getAudioTracks()[0];
   if (mixedTrack) {
     pc.getSenders().find(s => s.track?.kind === "audio")?.replaceTrack(mixedTrack).catch(() => {});
   }
@@ -1575,6 +1660,7 @@ function hangUp() {
    cámara. La cámara sigue viva mientras tanto para poder volver a ella. */
 
 async function toggleScreenShare() {
+  if (isObserver()) return;
   if (screenStream) {
     stopScreenShare();
     return;
@@ -1639,6 +1725,7 @@ async function toggleScreenShare() {
 let audioOnlyStream = null;
 
 async function toggleAudioOnlyShare() {
+  if (isObserver()) return;
   if (audioOnlyStream) {
     stopAudioOnlyShare();
     return;
@@ -3096,6 +3183,7 @@ function stopTimingMeter(silent = false) {
 }
 
 function startTimingMeter() {
+  if (isObserver()) return;
   if (!localStream?.getAudioTracks().length) {
     toast("No hay micrófono en este dispositivo para medir.");
     return;
@@ -3689,6 +3777,8 @@ function beatOffset(tServerMs) {
 // Audio sin filtros de voz: el procesamiento (cancelación de eco, supresión
 // de ruido, control de ganancia) recorta el sonido de los instrumentos.
 async function toggleMusicMode() {
+  // Este camino vuelve a pedir el micrófono: para el observador, ni empezar.
+  if (isObserver()) return;
   musicMode = !musicMode;
   renderAudioMode();
 
