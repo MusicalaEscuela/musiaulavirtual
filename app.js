@@ -426,7 +426,7 @@ function bindDom() {
     "registerBtn", "resetPassword", "logoutBtn", "userBadge",
     "personalRoomCard", "personalRoomName", "copyPersonalLink", "usePersonalRoom",
     "waitRoom", "waitTitle", "waitWhen", "waitHint", "waitCountdown",
-    "metroChip", "metroStateText", "beatIndicatorAula", "meter",
+    "metroChip", "metroStateText", "beatIndicatorAula", "meter", "observerChip",
     "metroVolume", "focusToolsBtn", "beatDots", "beatDotsAula",
     "timingToggle", "timingReadout"
   ].forEach(id => dom[id] = document.getElementById(id));
@@ -949,8 +949,16 @@ async function enterClass({ room, displayName, role }) {
     return;
   }
 
+  // Observador: reservado a coordinación. No es un rol para "entrar sin
+  // cámara": es supervisión, y quien supervisa tiene que estar identificado.
+  if (role === "observador" && !isAdminEmail(currentUser?.email)) {
+    toast("El modo observador es solo para coordinación. Entra como docente o estudiante.");
+    dom.lobby.classList.remove("hidden");
+    return;
+  }
+
   // Rol docente: solo correos autorizados en el Directorio del Hub de Docentes.
-  if ((role || "docente") !== "estudiante") {
+  if ((role || "docente") !== "estudiante" && role !== "observador") {
     const check = await isAuthorizedTeacher(currentUser?.email);
     if (!check.ok) {
       toast(check.reason === "sin-email"
@@ -978,11 +986,15 @@ async function enterClass({ room, displayName, role }) {
   appState.role = role || "docente";
   saveLocal();
 
-  document.body.classList.toggle("role-estudiante", appState.role === "estudiante");
-  document.body.classList.toggle("role-docente", appState.role !== "estudiante");
+  // El observador no maneja el escenario: ve lo mismo que el estudiante, pero
+  // sin controles de cámara ni micrófono, que no tendrían nada que controlar.
+  document.body.classList.toggle("role-estudiante", appState.role !== "docente");
+  document.body.classList.toggle("role-docente", appState.role === "docente");
+  document.body.classList.toggle("role-observador", isObserver());
 
   // El tipo de clase lo decide el docente; el estudiante lo recibe por la sala.
-  if (appState.role !== "estudiante") {
+  // El observador tampoco lo decide: mira, no manda.
+  if (appState.role === "docente") {
     appState.classMode = dom.classMode?.value === "danza" ? "danza" : "musica";
   }
   applyClassMode(appState.classMode);
@@ -1008,8 +1020,9 @@ async function connectRoom() {
   roomPath = `rooms/${appState.room}`;
   setStatus("Conectando", false);
 
-  // Cámara y micrófono primero: así cada conexión nueva ya lleva mis tracks.
-  await ensureLocalMedia();
+  // El observador no pide cámara ni micrófono: no tiene nada que enviar, y
+  // así el navegador ni siquiera le enciende la luz de la cámara.
+  if (!isObserver()) await ensureLocalMedia();
 
   try {
     // Presencia: aparezco en la sala y desaparezco solo si me desconecto.
@@ -1041,7 +1054,7 @@ async function connectRoom() {
   const liveRef = ref(db, `${roomPath}/live`);
   const existing = await get(liveRef).catch(() => null);
 
-  if (appState.role !== "estudiante" && (!existing || !existing.exists())) {
+  if (appState.role === "docente" && (!existing || !existing.exists())) {
     await set(liveRef, publicState()).catch(console.warn);
   }
 
@@ -1161,11 +1174,30 @@ function setStatus(text, online) {
   dom.connectionStatus.className = "status " + (online ? "online" : "offline");
 }
 
+// Observador: coordinación mirando la clase. No manda cámara ni micrófono y
+// no ocupa un recuadro en la pantalla de nadie. Pero SÍ se anuncia: nadie
+// debería estar siendo mirado sin saberlo.
+function isObserver() {
+  return appState.role === "observador";
+}
+
 function renderStatusCount() {
-  if (participantsCount > 1) {
-    setStatus(`Sincronizado · ${participantsCount} personas`, true);
-  } else if (participantsCount === 1) {
-    setStatus("Solo en sala", true);
+  const roles = Object.values(lastParticipants || {});
+  const observadores = roles.filter(p => p?.role === "observador").length;
+  const activos = Math.max(participantsCount - observadores, 0);
+
+  if (activos > 1) {
+    setStatus(`Sincronizado · ${activos} personas`, true);
+  } else if (activos === 1) {
+    setStatus(isObserver() ? "Observando · nadie más en el aula" : "Solo en sala", true);
+  }
+
+  if (dom.observerChip) {
+    dom.observerChip.classList.toggle("hidden", observadores === 0);
+    dom.observerChip.textContent = observadores === 1
+      ? "👁️ 1 observador"
+      : `👁️ ${observadores} observadores`;
+    dom.observerChip.title = "Alguien de coordinación está mirando la clase para apoyar y mejorar el aula. No participa ni graba.";
   }
 }
 
@@ -1259,7 +1291,7 @@ function syncPeers() {
   });
 }
 
-function createPeerFor(id, info = {}) {
+function createPeerFor(id, info = {}, { asOfferer = false } = {}) {
   const pc = new RTCPeerConnection(RTC_CONFIG);
   const entry = {
     id, pc,
@@ -1270,6 +1302,18 @@ function createPeerFor(id, info = {}) {
   peers.set(id, entry);
 
   localStream?.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+  // Sin tracks propios no habría nada que negociar y la conexión llegaría
+  // muda y a oscuras. Al ofrecer hay que pedir explícitamente "solo recibir".
+  // Al responder no hace falta: la oferta del otro ya trae los canales.
+  if (!localStream && asOfferer) {
+    try {
+      pc.addTransceiver("audio", { direction: "recvonly" });
+      pc.addTransceiver("video", { direction: "recvonly" });
+    } catch (error) {
+      console.warn("No se pudieron abrir los canales de solo recepción", error);
+    }
+  }
 
   // Si ya estoy compartiendo pantalla o música, quien entra tarde recibe
   // esos tracks en lugar de la cámara y el micrófono puros.
@@ -1312,7 +1356,7 @@ function createPeerFor(id, info = {}) {
 }
 
 async function initiatePeer(id, info) {
-  const entry = createPeerFor(id, info);
+  const entry = createPeerFor(id, info, { asOfferer: true });
   try {
     const offer = await entry.pc.createOffer();
     offer.sdp = preferHiFiOpus(offer.sdp);
@@ -1420,7 +1464,7 @@ function closeAllPeers() {
 async function reconnectAllPeers() {
   // Si la cámara/micrófono se negaron o fallaron al entrar, este es el momento
   // de volver a pedirlos: así las conexiones nuevas ya salen con mis tracks.
-  await ensureLocalMedia();
+  if (!isObserver()) await ensureLocalMedia();
   closeAllPeers();
   syncPeers();
   Object.keys(lastParticipants).forEach(id => {
@@ -1940,7 +1984,7 @@ function renderStage() {
 
   setFocusMode(stage.kind === "resource");
   dom.stageArea.classList.remove("hidden");
-  const isTeacher = appState.role !== "estudiante";
+  const isTeacher = appState.role === "docente";
   const closeButton = isTeacher
     ? `<button class="stage-close ghost tiny" data-stage-close>✕ Cerrar</button>`
     : "";
@@ -3719,7 +3763,7 @@ function activateTab(tabId) {
   });
 
   // La biblioteca se descarga solo cuando el docente abre Recursos.
-  if (tabId === "tab-recursos" && appState.role !== "estudiante" && !biblioLoaded) {
+  if (tabId === "tab-recursos" && appState.role === "docente" && !biblioLoaded) {
     initBiblioteca();
   }
 }
