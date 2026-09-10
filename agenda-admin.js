@@ -146,10 +146,14 @@ function pintar() {
     (c.studentName || "").toLowerCase().includes(filtro)
   );
 
+  const contador = $("classCount");
+  if (contador) contador.textContent = String(clases.length);
+
   if (!visibles.length) {
-    $("list").textContent = clases.length
-      ? "Ninguna clase coincide con el filtro."
-      : "Todavía no hay clases agendadas.";
+    $("list").innerHTML = clases.length
+      ? `<div class="agenda-empty"><span>🔍</span><p>Ninguna clase coincide con «${escapeHtml($("filter").value.trim())}».</p></div>`
+      : `<div class="agenda-empty"><span>🗓️</span><p><strong>Todavía no hay clases agendadas.</strong></p>
+         <p class="hint">Llena el formulario de la izquierda. Recuerda: un aula sin clases agendadas está cerrada, así que sin esto nadie puede entrar.</p></div>`;
     return;
   }
 
@@ -162,16 +166,22 @@ function pintar() {
       : `${c.date} a las ${c.start}`;
     const proxima = proximaOcurrencia(c, ahora);
     const siguiente = proxima ? `Próxima: ${textoCuando(proxima)}` : "Sin próximas fechas";
+    const activa = proxima !== null;
     return `
-      <article class="agenda-item">
-        <div>
-          <strong>${escapeHtml(c.studentName || "Sin nombre")}</strong>
-          <span class="agenda-chip">${escapeHtml(c.teacherEmail || "")}</span>
-        </div>
-        <p class="hint">${escapeHtml(cuando)} · ${c.duration} min · ${escapeHtml(siguiente)}</p>
-        <p class="hint">Aula: <code>${escapeHtml(c.room)}</code></p>
+      <article class="agenda-item${activa ? "" : " inactiva"}">
+        <header class="agenda-item-head">
+          <div>
+            <strong class="agenda-student">${escapeHtml(c.studentName || "Sin nombre")}</strong>
+            <p class="agenda-when">${escapeHtml(cuando)} · ${c.duration} min</p>
+          </div>
+          <span class="agenda-next ${activa ? "on" : ""}">${escapeHtml(siguiente)}</span>
+        </header>
+        <dl class="agenda-meta">
+          <div><dt>Docente</dt><dd>${escapeHtml(c.teacherEmail || "—")}</dd></div>
+          <div><dt>Aula</dt><dd><code>${escapeHtml(c.room)}</code></dd></div>
+        </dl>
         <div class="actions wrap">
-          <button class="secondary tiny" data-link="${escapeHtml(c.room)}">Copiar enlace del estudiante</button>
+          <button class="secondary tiny" data-link="${escapeHtml(c.room)}">🔗 Copiar enlace</button>
           <button class="danger tiny" data-del="${escapeHtml(c.room)}|${escapeHtml(c.id)}">Eliminar</button>
         </div>
       </article>

@@ -6,7 +6,7 @@
   <title>Agenda · MusiAula Virtual</title>
   <meta name="description" content="Panel de coordinación para agendar las clases de MusiAula Virtual." />
   <link rel="icon" type="image/png" href="./logo.png" />
-  <link rel="stylesheet" href="./styles.css?v=14" />
+  <link rel="stylesheet" href="./styles.css?v=17" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -33,7 +33,7 @@
       </div>
       <div class="top-actions">
         <span id="whoami" class="status"></span>
-        <a class="secondary" href="./index.html">Ir al aula</a>
+        <a class="secondary link-button" href="./index.html">🎬 Ir al aula</a>
         <button id="logout" class="danger">Cerrar sesión</button>
       </div>
     </header>
@@ -99,8 +99,9 @@
           </select>
         </label>
 
+        <div class="form-row">
         <label id="weekdayLabel">
-          Día de la semana
+          Día
           <select id="weekday">
             <option value="1">Lunes</option>
             <option value="2">Martes</option>
@@ -117,15 +118,14 @@
           <input id="date" type="date" />
         </label>
 
-        <div class="row-2">
-          <label>
-            Hora de inicio
-            <input id="start" type="time" value="15:00" required />
-          </label>
-          <label>
-            Duración (minutos)
-            <input id="duration" type="number" min="15" max="180" step="5" value="45" required />
-          </label>
+        <label>
+          Hora
+          <input id="start" type="time" value="15:00" required />
+        </label>
+        <label>
+          Minutos
+          <input id="duration" type="number" min="15" max="180" step="5" value="45" required />
+        </label>
         </div>
 
         <div class="actions">
@@ -136,18 +136,18 @@
 
       <section class="card">
         <div class="section-head">
-          <h2>Clases agendadas</h2>
-          <button id="refresh" class="tiny">Actualizar</button>
+          <h2>Clases agendadas <span id="classCount" class="agenda-count">0</span></h2>
+          <button id="refresh" class="secondary tiny">↻ Actualizar</button>
         </div>
         <label>
-          Filtrar por docente
-          <input id="filter" placeholder="Correo o nombre del estudiante" />
+          Buscar
+          <input id="filter" placeholder="Correo del docente o nombre del estudiante" />
         </label>
-        <div id="list" class="agenda-list">Cargando…</div>
+        <div id="list" class="agenda-list"></div>
       </section>
     </div>
   </main>
 
-  <script type="module" src="./agenda-admin.js?v=2"></script>
+  <script type="module" src="./agenda-admin.js?v=3"></script>
 </body>
 </html>

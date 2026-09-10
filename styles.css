@@ -49,7 +49,8 @@ textarea {
 }
 
 button,
-.link-button {
+.link-button,
+a.link-button {
   border: 0;
   border-radius: 999px;
   padding: 0.75rem 1rem;
@@ -915,12 +916,19 @@ textarea:focus {
   padding: 0.85rem 1rem;
   box-shadow: var(--shadow);
   max-width: min(92vw, 560px);
-  transition: transform 0.2s ease;
+  /* Se oculta por visibilidad y no solo por desplazamiento: el 160% se
+     calcula sobre la altura del propio toast, y estando vacío se quedaba
+     corto y asomaba por el borde inferior. */
+  visibility: hidden;
+  opacity: 0;
+  transition: transform 0.2s ease, opacity 0.2s ease, visibility 0.2s;
   font-weight: 750;
 }
 
 .toast.show {
   transform: translateX(-50%) translateY(0);
+  visibility: visible;
+  opacity: 1;
 }
 
 hr {
@@ -1750,25 +1758,142 @@ body.mode-danza .music-only { display: none !important; }
   color: var(--cream);
 }
 
-.agenda-page { padding: 0 clamp(12px, 3vw, 28px) 40px; }
+.agenda-page {
+  padding: 0 clamp(12px, 3vw, 28px) 48px;
+  max-width: 1180px;   /* en pantallas anchas el contenido no se estira solo */
+  margin: 0 auto;
+}
+
+.agenda-tabs {
+  max-width: 440px;
+  margin: 0 0 18px;
+}
+
+/* Columna del formulario fija y lista flexible: la lista es la que crece. */
 .agenda-grid {
   display: grid;
-  gap: 18px;
-  grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+  gap: 20px;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
   align-items: start;
 }
 @media (max-width: 900px) {
   .agenda-grid { grid-template-columns: minmax(0, 1fr); }
 }
-.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.agenda-list { display: grid; gap: 12px; margin-top: 0.6rem; }
-.agenda-item {
-  padding: 0.8rem 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
+
+/* El formulario de esta página es largo: campos más bajos y juntos para que
+   quepa sin scroll eterno. */
+.agenda-page .form-card { padding: 20px; }
+.agenda-page label {
+  margin-bottom: 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
 }
-.agenda-item .hint { margin: 0.25rem 0; }
+.agenda-page input,
+.agenda-page select {
+  padding: 0.6rem 0.75rem;
+  border-radius: 12px;
+}
+.agenda-page h2 { margin-bottom: 0.4rem; }
+
+/* Día, hora y duración van juntos: son una sola idea. */
+.form-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 0.8fr;
+  gap: 10px;
+  align-items: end;
+}
+.form-row label { margin-bottom: 0.75rem; }
+.form-row label.hidden { display: none; }
+.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.agenda-count {
+  display: inline-block;
+  min-width: 26px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--line);
+  font-size: 0.8rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+.agenda-list { display: grid; gap: 12px; margin-top: 0.8rem; }
+
+.agenda-item {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.045);
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+.agenda-item:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.07);
+}
+/* Una clase única ya pasada: se ve, pero apagada. */
+.agenda-item.inactiva { opacity: 0.55; }
+
+.agenda-item-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.agenda-student { font-size: 1.02rem; }
+.agenda-when { margin: 2px 0 0; color: var(--muted); font-size: 0.85rem; }
+
+.agenda-next {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  white-space: nowrap;
+}
+.agenda-next.on {
+  background: linear-gradient(90deg, var(--blue), var(--pink));
+  border-color: transparent;
+  color: #fff;
+}
+
+/* Docente y aula: datos de apoyo, no protagonistas. */
+.agenda-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin: 0.7rem 0 0.2rem;
+}
+.agenda-meta div { display: grid; gap: 1px; }
+.agenda-meta dt {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  opacity: 0.8;
+}
+.agenda-meta dd { margin: 0; font-size: 0.84rem; }
+.agenda-meta code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+.agenda-item .actions { margin-top: 0.7rem; }
+
+.agenda-empty {
+  text-align: center;
+  padding: 2.2rem 1rem;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  color: var(--muted);
+}
+.agenda-empty span { font-size: 2.2rem; display: block; margin-bottom: 0.5rem; }
+.agenda-empty p { margin: 0.3rem 0; }
+
 .agenda-chip {
   display: inline-block;
   margin-left: 8px;
