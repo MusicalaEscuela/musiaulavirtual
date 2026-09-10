@@ -2039,3 +2039,49 @@ body.mode-danza .music-only { display: none !important; }
 }
 .remote-ask p { margin: 0 0 0.7rem; }
 .remote-ask .actions { justify-content: center; gap: 10px; }
+
+/* ===== Pizarrón ===== */
+.board-media {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 74vh;
+  margin: 0 auto;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+/* Hoja clara: sobre fondo oscuro el trazo se ve, pero un pizarrón blanco es
+   lo que la gente espera y no cansa la vista en una clase larga. */
+.board-sheet {
+  position: absolute;
+  inset: 0;
+  background: #fbf7ff;
+  background-image:
+    linear-gradient(rgba(90, 60, 140, 0.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(90, 60, 140, 0.09) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+.board-media .annot-canvas { pointer-events: auto; touch-action: none; }
+
+/* Selector de tiza */
+.ink-btn {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 2px solid transparent;
+}
+.ink-btn span {
+  display: block;
+  width: 20px;
+  height: 20px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: var(--tinta);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+.ink-btn.on { border-color: #fff; transform: scale(1.08); }

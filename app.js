@@ -719,7 +719,7 @@ function bindDom() {
     "stageArea", "stageNote", "btnStageNote", "btnStageSeq", "btnStageQuiz",
     "btnStagePulse", "btnStageCelebrate", "btnStageClear",
     "btnStagePiano", "btnStageGuitar", "btnStageBass", "btnStageViolin", "btnStageDrums",
-    "btnStageTuner",
+    "btnStageTuner", "btnStageBoard",
     "btnStageSimon", "btnStageEar", "btnStageMatch", "btnStageCountdown",
     "videoArea", "videoGrid", "remotePlaceholder", "localVideo",
     "toggleMic", "toggleCam", "toggleMusicMode", "toggleSpeaker", "audioModeChip",
@@ -920,6 +920,11 @@ function setupEvents() {
   dom.btnStageTuner.addEventListener("click", () => {
     launchStage({ kind: "tuner", title: "Afinador 🎯" });
     toast("Afinador en pantalla. Cada quien afina con SU propio micrófono.");
+  });
+
+  dom.btnStageBoard.addEventListener("click", () => {
+    launchStage({ kind: "board", id: cryptoId(), title: "Pizarrón 🖍️" });
+    toast("Pizarrón abierto. Los dos pueden dibujar.");
   });
 
   dom.btnStageViolin.addEventListener("click", () => {
@@ -2339,7 +2344,7 @@ function renderStage() {
     return;
   }
 
-  setFocusMode(stage.kind === "resource");
+  setFocusMode(stage.kind === "resource" || stage.kind === "board");
   dom.stageArea.classList.remove("hidden");
   const isTeacher = appState.role === "docente";
   const closeButton = isTeacher
@@ -2412,6 +2417,7 @@ function renderStage() {
   }
 
   if (stage.kind === "resource") renderResourceStage(stage, isTeacher, closeButton);
+  if (stage.kind === "board") renderBoardStage(stage, isTeacher, closeButton);
 
   if (stage.kind === "instrument") renderInstrumentStage(stage, isTeacher, closeButton);
   if (stage.kind === "tuner") renderTunerStage(stage, closeButton);
@@ -3330,6 +3336,57 @@ function renderResourceStage(stage, isTeacher, closeButton) {
   if (media) setupResourceAnnotations(stage, isTeacher);
 }
 
+
+/* ===== Pizarrón =====
+   Reusa el mismo motor de trazos que las anotaciones sobre recursos: las
+   coordenadas viajan normalizadas (0..1), así el dibujo se ve igual en el
+   portátil del profe y en el celular del estudiante.
+
+   A diferencia de las anotaciones, aquí dibujan LOS DOS: un pizarrón donde
+   solo escribe el profe es una diapositiva, no un pizarrón. */
+
+const TIZAS = [
+  { color: "#1b1033", nombre: "Negro" },
+  { color: "#e0218a", nombre: "Rosado" },
+  { color: "#2f6bff", nombre: "Azul" },
+  { color: "#12a150", nombre: "Verde" },
+  { color: "#e2820b", nombre: "Naranja" }
+];
+
+function renderBoardStage(stage, isTeacher, closeButton) {
+  annotColor = TIZAS[0].color;
+
+  dom.stageArea.innerHTML = `
+    ${closeButton}
+    <button class="stage-focus-toggle secondary tiny" data-focus-toggle>${focusCollapsed ? "⛶ Pantalla completa" : "⤢ Ver cámaras"}</button>
+    <p class="label">${escapeHtml(stage.title || "Pizarrón")}</p>
+    <div class="annot-tools" data-annot-tools>
+      ${TIZAS.map((t, i) => `
+        <button class="ink-btn${i === 0 ? " on" : ""}" data-ink="${t.color}" title="${t.nombre}"
+                style="--tinta:${t.color}"><span></span></button>
+      `).join("")}
+      <button class="secondary tiny" data-tool="draw">✏️ Dibujar</button>
+      <button class="ghost tiny" data-annot-clear>🧽 Borrar todo</button>
+    </div>
+    <p class="hint">Elige un color y dibuja. Lo que rayes aparece al instante en la pantalla del otro, y el otro también puede dibujar.</p>
+    <div class="stage-media board-media" data-annot-media>
+      <div class="board-sheet"></div>
+      <canvas class="annot-canvas" data-annot-canvas></canvas>
+      <div class="annot-pointer hidden" data-annot-pointer>👆</div>
+    </div>
+  `;
+
+  const focusBtn = dom.stageArea.querySelector("[data-focus-toggle]");
+  focusBtn?.addEventListener("click", () => {
+    focusCollapsed = !focusCollapsed;
+    applyFocus();
+    focusBtn.textContent = focusCollapsed ? "⛶ Pantalla completa" : "⤢ Ver cámaras";
+  });
+
+  // El segundo argumento habilita las herramientas: en el pizarrón, para todos.
+  setupResourceAnnotations(stage, true);
+}
+
 /* ===== Puntero compartido y anotaciones sobre el recurso =====
    El docente puede señalar (el estudiante ve su dedo moverse) o dibujar
    encima del recurso proyectado. Los trazos viajan por RTDB en coordenadas
@@ -3338,6 +3395,7 @@ function renderResourceStage(stage, isTeacher, closeButton) {
 let annotUnsubs = [];
 let annotStrokes = new Map(); // strokeId -> { pts: [{x,y}, ...] }
 let annotTool = null;
+let annotColor = "#e0218a"; // color del trazo actual, se manda con cada segmento
 
 
 /* ===== Medidor de precisión rítmica =====
@@ -3541,11 +3599,12 @@ function setupResourceAnnotations(stage, isTeacher) {
 
   const ctx = canvas.getContext("2d");
   const INK = "#e0218a";
+  const esPizarron = stage.kind === "board";
 
-  const drawPts = pts => {
+  const drawPts = (pts, color, grosor) => {
     if (!pts || pts.length < 2) return;
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = color || INK;
+    ctx.lineWidth = grosor || (esPizarron ? 4 : 3);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     ctx.beginPath();
@@ -3558,7 +3617,7 @@ function setupResourceAnnotations(stage, isTeacher) {
 
   const redraw = () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const s of annotStrokes.values()) drawPts(s.pts);
+    for (const s of annotStrokes.values()) drawPts(s.pts, s.color, s.grosor);
   };
 
   // El bitmap del canvas debe seguir el tamaño real del recurso. No basta con
@@ -3597,12 +3656,14 @@ function setupResourceAnnotations(stage, isTeacher) {
       }
       if (ev.kind === "seg" && ev.by !== CLIENT_ID && Array.isArray(ev.pts)) {
         syncSize();
-        const s = annotStrokes.get(ev.strokeId) || { pts: [] };
+        const s = annotStrokes.get(ev.strokeId) || { pts: [], color: ev.color, grosor: ev.grosor };
         // Conecta con el último punto previo para que el trazo sea continuo.
         const joined = s.pts.length ? [s.pts[s.pts.length - 1], ...ev.pts] : ev.pts;
         s.pts = s.pts.concat(ev.pts);
+        s.color = ev.color || s.color;
+        s.grosor = ev.grosor || s.grosor;
         annotStrokes.set(ev.strokeId, s);
-        drawPts(joined);
+        drawPts(joined, s.color, s.grosor);
       }
     }));
 
@@ -3640,9 +3701,17 @@ function setupResourceAnnotations(stage, isTeacher) {
     tools.querySelectorAll("[data-tool]").forEach(b => b.classList.toggle("on", b.dataset.tool === annotTool));
     if (!annotTool) sendPointer(null);
   };
-  tools.querySelector('[data-tool="pointer"]').addEventListener("click", () => setTool("pointer"));
-  tools.querySelector('[data-tool="draw"]').addEventListener("click", () => setTool("draw"));
-  tools.querySelector("[data-annot-clear]").addEventListener("click", () => {
+  tools.querySelectorAll("[data-ink]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      annotColor = btn.dataset.ink;
+      tools.querySelectorAll("[data-ink]").forEach(b => b.classList.toggle("on", b === btn));
+      if (annotTool !== "draw") setTool("draw");
+    });
+  });
+
+  tools.querySelector('[data-tool="pointer"]')?.addEventListener("click", () => setTool("pointer"));
+  tools.querySelector('[data-tool="draw"]')?.addEventListener("click", () => setTool("draw"));
+  tools.querySelector("[data-annot-clear]")?.addEventListener("click", () => {
     annotStrokes = new Map();
     redraw();
     if (firebaseReady && roomPath) {
@@ -3665,7 +3734,8 @@ function setupResourceAnnotations(stage, isTeacher) {
     if (!stroke || !stroke.pending.length) return;
     if (firebaseReady && roomPath) {
       push(ref(db, `${roomPath}/annot/${stage.id}/events`), {
-        kind: "seg", strokeId: stroke.id, by: CLIENT_ID, pts: stroke.pending
+        kind: "seg", strokeId: stroke.id, by: CLIENT_ID, pts: stroke.pending,
+        color: stroke.color, grosor: stroke.grosor
       }).catch(() => {});
     }
     stroke.pending = [];
@@ -3674,7 +3744,7 @@ function setupResourceAnnotations(stage, isTeacher) {
   const endStroke = () => {
     if (!stroke) return;
     flushStroke();
-    annotStrokes.set(stroke.id, { pts: stroke.pts });
+    annotStrokes.set(stroke.id, { pts: stroke.pts, color: stroke.color, grosor: stroke.grosor });
     stroke = null;
   };
 
@@ -3683,7 +3753,7 @@ function setupResourceAnnotations(stage, isTeacher) {
     syncSize();
     try { canvas.setPointerCapture(e.pointerId); } catch {}
     const p = norm(e);
-    stroke = { id: cryptoId(), pts: [p], pending: [p] };
+    stroke = { id: cryptoId(), pts: [p], pending: [p], color: annotColor, grosor: esPizarron ? 4 : 3 };
   });
 
   canvas.addEventListener("pointermove", e => {
@@ -3700,7 +3770,7 @@ function setupResourceAnnotations(stage, isTeacher) {
     const p = norm(e);
     stroke.pts.push(p);
     stroke.pending.push(p);
-    drawPts([prev, p]);
+    drawPts([prev, p], stroke.color, stroke.grosor);
     if (stroke.pending.length >= 10) flushStroke(); // el otro lado lo ve casi en vivo
   });
 
