@@ -10,7 +10,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { loadBiblioteca } from "./biblioteca.js?v=4";
-import { isAuthorizedTeacher } from "./docentes-hub.js?v=2";
+import { isAuthorizedTeacher } from "./docentes-hub.js?v=3";
 import { personalRoomFor, isAdminEmail } from "./sala.js?v=1";
 import { estadoDeSala, textoCuando, ABRE_ANTES_MIN } from "./agenda-core.js?v=1";
 

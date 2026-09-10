@@ -7,6 +7,9 @@ import { getAuth, onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPop
 import { firebaseConfig } from "./firebase-config.js";
 import { personalRoomFor, isAdminEmail, ADMIN_EMAILS } from "./sala.js?v=1";
 import { nombreDia, textoCuando, proximaOcurrencia } from "./agenda-core.js?v=1";
+import {
+  hubAuth, onHubUser, signInHub, listTeachers, saveTeacher, removeTeacher
+} from "./docentes-hub.js?v=3";
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
@@ -205,4 +208,139 @@ function pintar() {
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, ch =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+}
+
+
+/* ===== Pestañas del panel ===== */
+
+document.querySelectorAll(".agenda-tabs .tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".agenda-tabs .tab").forEach(t => t.classList.toggle("active", t === tab));
+    $("panelClases").classList.toggle("hidden", tab.dataset.panel !== "panelClases");
+    $("panelDocentes").classList.toggle("hidden", tab.dataset.panel !== "panelDocentes");
+    if (tab.dataset.panel === "panelDocentes") cargarDocentes();
+  });
+});
+
+/* ===== Docentes autorizados =====
+   Viven en el Hub de Docentes, que es OTRO proyecto Firebase: la sesión de
+   MusiAula no vale allá. Sus reglas ya permiten escribir teacherDirectory a
+   los mismos cuatro correos, así que solo hay que iniciar sesión también
+   en el Hub. */
+
+let hubListo = false;
+
+onHubUser(user => {
+  hubListo = !!user && isAdminEmail(user.email);
+  $("hubGate").classList.toggle("hidden", hubListo);
+  $("teacherForm").classList.toggle("hidden", !hubListo);
+  if (hubListo) cargarDocentes();
+});
+
+$("hubLogin").addEventListener("click", async () => {
+  try {
+    const user = await signInHub();
+    if (!isAdminEmail(user.email)) {
+      toast(`${user.email} no puede administrar docentes.`);
+      return;
+    }
+    toast("Conectado al Hub.");
+  } catch (error) {
+    toast("No se pudo conectar al Hub: " + (error?.code || error));
+  }
+});
+
+$("newTeacherEmail").addEventListener("input", pintarAulaNueva);
+$("newTeacherSlug").addEventListener("input", pintarAulaNueva);
+
+function pintarAulaNueva() {
+  const slug = $("newTeacherSlug").value.trim();
+  const room = personalRoomFor($("newTeacherEmail").value, slug ? { salaSlug: slug } : null);
+  $("newTeacherRoom").textContent = room || "—";
+}
+
+$("teacherForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const email = $("newTeacherEmail").value.trim().toLowerCase();
+  if (!email) return;
+
+  const datos = { enabled: true, updatedBy: hubAuth().currentUser?.email || "", updatedAt: Date.now() };
+  const nombre = $("newTeacherName").value.trim();
+  const slug = $("newTeacherSlug").value.trim();
+  if (nombre) datos.name = nombre;
+  if (slug) datos.salaSlug = slug;
+
+  try {
+    await saveTeacher(email, datos);
+    toast(`${email} ya puede entrar como docente.`);
+    $("newTeacherEmail").value = "";
+    $("newTeacherName").value = "";
+    $("newTeacherSlug").value = "";
+    pintarAulaNueva();
+    cargarDocentes();
+  } catch (error) {
+    console.error(error);
+    toast("No se pudo guardar: " + (error?.code || error));
+  }
+});
+
+async function cargarDocentes() {
+  const cont = $("teacherList");
+  cont.textContent = "Cargando…";
+  try {
+    const docentes = await listTeachers();
+    if (!docentes.length) {
+      cont.textContent = "Todavía no hay docentes autorizados.";
+      return;
+    }
+    docentes.sort((a, b) => a.email.localeCompare(b.email));
+    cont.innerHTML = docentes.map(d => {
+      const activo = d.enabled !== false;
+      const room = personalRoomFor(d.email, d);
+      return `
+        <article class="agenda-item">
+          <div>
+            <strong>${escapeHtml(d.name || d.email)}</strong>
+            <span class="agenda-chip">${activo ? "Activo" : "Inhabilitado"}</span>
+          </div>
+          <p class="hint">${escapeHtml(d.email)}</p>
+          <p class="hint">Aula: <code>${escapeHtml(room)}</code></p>
+          <div class="actions wrap">
+            <button class="secondary tiny" data-toggle="${escapeHtml(d.email)}" data-next="${activo ? "0" : "1"}">
+              ${activo ? "Inhabilitar" : "Reactivar"}
+            </button>
+            <button class="danger tiny" data-remove="${escapeHtml(d.email)}">Quitar</button>
+          </div>
+        </article>
+      `;
+    }).join("");
+
+    cont.querySelectorAll("[data-toggle]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        try {
+          await saveTeacher(btn.dataset.toggle, { enabled: btn.dataset.next === "1" });
+          toast("Listo.");
+          cargarDocentes();
+        } catch (error) {
+          toast("No se pudo cambiar: " + (error?.code || error));
+        }
+      });
+    });
+
+    cont.querySelectorAll("[data-remove]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        if (!confirm(`¿Quitar a ${btn.dataset.remove} del directorio de docentes?`)) return;
+        try {
+          await removeTeacher(btn.dataset.remove);
+          toast("Docente retirado.");
+          cargarDocentes();
+        } catch (error) {
+          toast("No se pudo quitar: " + (error?.code || error));
+        }
+      });
+    });
+  } catch (error) {
+    console.error(error);
+    cont.textContent = "No se pudo leer el directorio: " + (error?.code || error);
+  }
 }

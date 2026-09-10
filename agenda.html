@@ -38,7 +38,45 @@
       </div>
     </header>
 
-    <div class="agenda-grid">
+    <nav class="tabs agenda-tabs">
+      <button class="tab active" data-panel="panelClases">Clases</button>
+      <button class="tab" data-panel="panelDocentes">Docentes autorizados</button>
+    </nav>
+
+    <div id="panelDocentes" class="card hidden docentes-panel">
+      <h2>Docentes con permiso para dar clase</h2>
+      <p class="hint">Quien esté aquí puede entrar a MusiAula como docente y tiene su propia aula permanente. Se guarda en el Hub de Docentes, así que sirve también para las demás apps de Musicala.</p>
+
+      <div id="hubGate" class="warning">
+        <p>El Hub es otro proyecto: hay que iniciar sesión ahí también para poder editar.</p>
+        <button id="hubLogin" class="primary">Conectar con el Hub</button>
+      </div>
+
+      <form id="teacherForm" class="hidden">
+        <div class="row-2">
+          <label>
+            Correo del docente
+            <input id="newTeacherEmail" type="email" placeholder="profe@musicala.co" required />
+          </label>
+          <label>
+            Nombre (opcional)
+            <input id="newTeacherName" placeholder="Profe Cata" />
+          </label>
+        </div>
+        <label>
+          Nombre del aula (opcional)
+          <input id="newTeacherSlug" placeholder="profe-cata-guitarra" />
+        </label>
+        <p class="hint">Si lo dejas vacío, el aula se calcula del correo. <strong id="newTeacherRoom">—</strong></p>
+        <div class="actions">
+          <button type="submit" class="primary">Autorizar docente</button>
+        </div>
+      </form>
+
+      <div id="teacherList" class="agenda-list"></div>
+    </div>
+
+    <div id="panelClases" class="agenda-grid">
       <form id="classForm" class="card form-card">
         <h2>Agendar una clase</h2>
 
@@ -110,6 +148,6 @@
     </div>
   </main>
 
-  <script type="module" src="./agenda-admin.js?v=1"></script>
+  <script type="module" src="./agenda-admin.js?v=2"></script>
 </body>
 </html>

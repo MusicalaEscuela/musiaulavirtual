@@ -1777,3 +1777,8 @@ body.mode-danza .music-only { display: none !important; }
   background: rgba(255, 255, 255, 0.1);
   font-size: 0.72rem;
 }
+
+/* Panel de agenda: pestañas y docentes */
+.agenda-tabs { max-width: 420px; margin: 0 0 14px; }
+.docentes-panel { margin-bottom: 18px; }
+.docentes-panel .warning { margin: 0.8rem 0; }

@@ -3,7 +3,12 @@
 // anónimo para estudiantes), pero solo puede entrar como DOCENTE quien esté
 // registrado en el directorio del Hub (teacherDirectory, lectura pública).
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {
+  getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import {
+  getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider
+} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 
 // Config pública del Hub (la seguridad son sus reglas de Firestore).
 const hubConfig = {
@@ -54,4 +59,56 @@ export async function isAuthorizedTeacher(email) {
     console.warn("No se pudo verificar el docente contra el Hub", error);
     return { ok: true, reason: "sin-verificar", data: null };
   }
+}
+
+
+/* ===== Administración del directorio de docentes =====
+   Las reglas del Hub ya permiten escribir teacherDirectory a los cuatro
+   correos de coordinación (isAdminReader), así que aquí no hace falta tocar
+   ninguna regla: solo faltaba la interfaz.
+
+   Ojo: el Hub es otro proyecto Firebase. La sesión de MusiAula no sirve
+   allá, hay que iniciar sesión también en el Hub para que sus reglas vean
+   el correo de quien escribe. */
+
+let hubAuthInstance = null;
+
+export function hubAuth() {
+  if (!hubAuthInstance) {
+    hubAuthInstance = getAuth(initializeApp(hubConfig, "docentes-hub"));
+  }
+  return hubAuthInstance;
+}
+
+export function onHubUser(callback) {
+  return onAuthStateChanged(hubAuth(), callback);
+}
+
+export async function signInHub() {
+  const provider = new GoogleAuthProvider();
+  // Fuerza el selector de cuenta: quien administra suele tener varias.
+  provider.setCustomParameters({ prompt: "select_account" });
+  const cred = await signInWithPopup(hubAuth(), provider);
+  return cred.user;
+}
+
+export async function listTeachers() {
+  const snap = await getDocs(collection(db(), "teacherDirectory"));
+  return snap.docs.map(d => ({ email: d.id, ...d.data() }));
+}
+
+export async function saveTeacher(email, data) {
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) throw new Error("Falta el correo");
+  await setDoc(doc(db(), "teacherDirectory", normalized), data, { merge: true });
+  // El aula cachea la autorización 6 horas; al cambiar algo se limpia para
+  // que el docente no tenga que esperar a que venza.
+  try { localStorage.removeItem(CACHE_KEY); } catch {}
+  return normalized;
+}
+
+export async function removeTeacher(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  await deleteDoc(doc(db(), "teacherDirectory", normalized));
+  try { localStorage.removeItem(CACHE_KEY); } catch {}
 }
