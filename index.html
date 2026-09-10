@@ -8,7 +8,7 @@
   <link rel="icon" type="image/png" href="./logo.png" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=18" />
+  <link rel="stylesheet" href="./styles.css?v=19" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -87,6 +87,12 @@
             <option value="danza">💃 Baile / Danza (prioridad al audio y la música)</option>
           </select>
         </label>
+
+        <div id="observerPanel" class="observer-panel hidden">
+          <p class="label">Clases para observar</p>
+          <p class="hint">Entras sin cámara ni micrófono. En la clase aparece un aviso discreto de que hay un observador.</p>
+          <div id="observerList" class="observer-list">Cargando clases…</div>
+        </div>
 
         <div id="personalRoomCard" class="personal-room hidden">
           <p class="label">Tu aula personal</p>
@@ -448,6 +454,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=28"></script>
+  <script type="module" src="./app.js?v=29"></script>
 </body>
 </html>

@@ -181,12 +181,24 @@ function pintar() {
           <div><dt>Aula</dt><dd><code>${escapeHtml(c.room)}</code></dd></div>
         </dl>
         <div class="actions wrap">
+          <button class="secondary tiny" data-observe="${escapeHtml(c.room)}">👁️ Observar</button>
           <button class="secondary tiny" data-link="${escapeHtml(c.room)}">🔗 Copiar enlace</button>
           <button class="danger tiny" data-del="${escapeHtml(c.room)}|${escapeHtml(c.id)}">Eliminar</button>
         </div>
       </article>
     `;
   }).join("");
+
+  // Entrar a mirar la clase sin cámara ni micrófono, en otra pestaña para no
+  // perder el panel.
+  $("list").querySelectorAll("[data-observe]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const url = new URL("./index.html", location.href);
+      url.searchParams.set("room", btn.dataset.observe);
+      url.searchParams.set("role", "observador");
+      window.open(url.toString(), "_blank", "noopener");
+    });
+  });
 
   $("list").querySelectorAll("[data-link]").forEach(btn => {
     btn.addEventListener("click", async () => {

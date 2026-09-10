@@ -12,7 +12,7 @@ import { firebaseConfig } from "./firebase-config.js";
 import { loadBiblioteca } from "./biblioteca.js?v=4";
 import { isAuthorizedTeacher } from "./docentes-hub.js?v=3";
 import { personalRoomFor, isAdminEmail } from "./sala.js?v=1";
-import { estadoDeSala, textoCuando, ABRE_ANTES_MIN } from "./agenda-core.js?v=1";
+import { estadoDeSala, textoCuando, proximaOcurrencia, ABRE_ANTES_MIN } from "./agenda-core.js?v=1";
 
 const NOTES = ["Do", "Re", "Mi", "Fa", "Sol", "La", "Si"];
 const STORAGE_KEY = "musiaula_prototipo_v2";
@@ -174,6 +174,7 @@ function init() {
         dom.displayName.value = user.displayName;
       }
       setupPersonalRoom(user.email);
+      syncObserverPanel();
       // Reloj del servidor para el metrónomo sincronizado
       onValue(ref(db, ".info/serverTimeOffset"), snap => {
         serverTimeOffset = snap.val() || 0;
@@ -246,12 +247,85 @@ async function setupPersonalRoom(email) {
 
   dom.personalRoomName.textContent = personalRoom;
   dom.personalRoomCard.classList.remove("hidden");
+  syncObserverPanel();
 
   // Se propone como sala por defecto, pero se puede escribir otra (clases
   // grupales, reemplazos, pruebas).
   if (!dom.roomName.value) dom.roomName.value = personalRoom;
 }
 
+
+
+/* ===== Elegir qué clase observar =====
+   Un observador no tiene sala propia: viene a mirar la de otro. Sin esta
+   lista tendría que adivinar el nombre del aula ajena, que es justo lo que
+   la sala personal hace imposible de recordar. */
+
+async function renderObserverClasses() {
+  if (!dom.observerList) return;
+  dom.observerList.textContent = "Cargando clases…";
+
+  let data = null;
+  try {
+    const snap = await get(ref(db, "agenda"));
+    data = snap.val();
+  } catch (error) {
+    dom.observerList.textContent = "No se pudo leer la agenda.";
+    return;
+  }
+
+  const ahora = serverNow();
+  const items = [];
+  for (const [room, porSala] of Object.entries(data || {})) {
+    for (const [id, clase] of Object.entries(porSala || {})) {
+      if (!clase || clase.active === false) continue;
+      const inicio = proximaOcurrencia(clase, ahora);
+      if (inicio === null) continue; // clase única ya pasada
+      const estado = estadoDeSala({ [id]: clase }, ahora);
+      items.push({ room, clase, inicio, enCurso: estado.abierto });
+    }
+  }
+
+  if (!items.length) {
+    dom.observerList.innerHTML = `<p class="hint">No hay clases agendadas. Agenda una desde el panel de coordinación.</p>`;
+    return;
+  }
+
+  // Las que están pasando ahora, primero: es lo que se viene a observar.
+  items.sort((a, b) => (b.enCurso - a.enCurso) || (a.inicio - b.inicio));
+
+  dom.observerList.innerHTML = items.slice(0, 12).map(item => `
+    <button type="button" class="observer-item${item.enCurso ? " en-curso" : ""}" data-observe="${escapeHtml(item.room)}">
+      <span class="observer-item-main">
+        <strong>${escapeHtml(item.clase.studentName || "Sin nombre")}</strong>
+        <span class="hint">${escapeHtml(item.clase.teacherEmail || "")}</span>
+      </span>
+      <span class="observer-item-when">
+        ${item.enCurso ? '<span class="observer-live">● En curso</span>' : escapeHtml(textoCuando(item.inicio))}
+      </span>
+    </button>
+  `).join("");
+
+  dom.observerList.querySelectorAll("[data-observe]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      enterClass({
+        room: btn.dataset.observe,
+        displayName: dom.displayName.value.trim() || currentUser?.displayName || "Coordinación",
+        role: "observador"
+      });
+    });
+  });
+}
+
+// El panel solo tiene sentido para coordinación y con el rol observador puesto.
+function syncObserverPanel() {
+  const esObservador = dom.role?.value === "observador";
+  const puede = esObservador && isAdminEmail(currentUser?.email);
+  dom.observerPanel?.classList.toggle("hidden", !puede);
+  // El aula propia no sirve para observar: se aparta para no confundir.
+  if (personalRoom) dom.personalRoomCard?.classList.toggle("hidden", esObservador);
+  if (puede) renderObserverClasses();
+}
 
 /* ===== Control de horario =====
    El aula personal es permanente, y eso abre un hueco: sin control, el
@@ -425,6 +499,7 @@ function bindDom() {
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
     "registerBtn", "resetPassword", "logoutBtn", "userBadge",
     "personalRoomCard", "personalRoomName", "copyPersonalLink", "usePersonalRoom",
+    "observerPanel", "observerList",
     "waitRoom", "waitTitle", "waitWhen", "waitHint", "waitCountdown",
     "metroChip", "metroStateText", "beatIndicatorAula", "meter", "observerChip",
     "metroVolume", "focusToolsBtn", "beatDots", "beatDotsAula",
@@ -680,6 +755,8 @@ function setupEvents() {
   dom.focusToolsBtn.addEventListener("click", () => {
     document.body.classList.toggle("tools-open");
   });
+
+  dom.role.addEventListener("change", syncObserverPanel);
 
   dom.usePersonalRoom.addEventListener("click", () => {
     if (!personalRoom) return;
