@@ -437,6 +437,10 @@ textarea:focus {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* Los controles se posicionan contra el panel, no contra el área de video:
+     así en pantallas pequeñas pueden salirse de encima del video en vez de
+     taparlo. */
+  position: relative;
 }
 
 /* ===== Área de video propia (WebRTC) ===== */
@@ -492,6 +496,25 @@ textarea:focus {
   transform: translateX(-50%);
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 96%;
+  z-index: 6;
+}
+
+/* En celular los nueve controles con nombre no caben en una fila y, flotando
+   sobre el video, lo tapaban por completo. Aquí bajan a su propia franja
+   debajo del video: ocupan sitio, pero no esconden a nadie. */
+@media (max-width: 760px) {
+  .video-controls {
+    position: static;
+    transform: none;
+    margin: 8px 0 2px;
+    max-width: 100%;
+    gap: 6px;
+    padding: 0 4px;
+  }
+  .video-area { min-height: 210px; }
 }
 
 /* Cada control lleva su nombre debajo del icono: un emoji solo no dice qué
@@ -524,10 +547,10 @@ textarea:focus {
 /* La barra puede envolverse: caben nueve controles con nombre sin salirse. */
 .video-controls { flex-wrap: wrap; justify-content: center; max-width: 96%; }
 
-@media (max-width: 640px) {
-  .vc-btn { min-width: 50px; padding: 5px 7px 4px; }
+@media (max-width: 760px) {
+  .vc-btn { min-width: 0; flex: 1 1 auto; max-width: 84px; padding: 5px 4px 4px; }
   .vc-ico { font-size: 1rem; }
-  .vc-label { font-size: 0.56rem; }
+  .vc-label { font-size: 0.55rem; }
 }
 
 .vc-btn.off {
@@ -1471,7 +1494,7 @@ hr {
 /* Los controles salen del recuadro flotante (donde no cabrían) y se anclan
    al pie de la pantalla: micrófono, cámara y compartir siguen a la mano
    mientras se proyecta un recurso. */
-.focus-mode .video-area .video-controls {
+.focus-mode .video-controls {
   position: fixed;
   bottom: 14px;
   left: 50%;
@@ -1484,7 +1507,7 @@ hr {
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
 }
-.focus-mode .video-area .video-controls .vc-btn {
+.focus-mode .video-controls .vc-btn {
   min-width: 52px;
   padding: 4px 8px 3px;
 }

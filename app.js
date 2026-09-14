@@ -559,6 +559,76 @@ function syncObserverPanel() {
   if (puede) renderObserverClasses();
 }
 
+
+/* ===== Recuperación automática de la conexión =====
+   El caso real: la profe entra, hay dos personas en la sala, pero no se ve
+   ni se oye a nadie hasta que alguien pulsa Rescate. Eso pasa cuando la
+   negociación se pierde (una señal que llegó antes de tiempo, la red del
+   celular cambiando de antena) y nadie la vuelve a intentar.
+
+   En vez de pedirle al docente que sepa qué botón tocar, la clase se
+   arregla sola: si hay alguien más en la sala y pasados unos segundos
+   seguimos sin recibir su audio o su video, se reintenta. */
+
+let vigiaConexion = null;
+let intentosAuto = 0;
+let desdeCuandoSolos = 0;
+
+function hayAlguienConectado() {
+  for (const { pc, stream } of peers.values()) {
+    if (stream && pc.connectionState !== "failed" && pc.connectionState !== "closed") return true;
+  }
+  return false;
+}
+
+function iniciarVigiaConexion() {
+  detenerVigiaConexion();
+  intentosAuto = 0;
+  desdeCuandoSolos = 0;
+
+  vigiaConexion = setInterval(() => {
+    const otros = Math.max(participantsCount - 1, 0);
+
+    // Solos en la sala: no hay nada que reparar.
+    if (otros < 1) {
+      desdeCuandoSolos = 0;
+      intentosAuto = 0;
+      return;
+    }
+
+    if (hayAlguienConectado()) {
+      desdeCuandoSolos = 0;
+      intentosAuto = 0;
+      return;
+    }
+
+    // Hay alguien más pero no llega su medio: se cuenta el tiempo.
+    if (!desdeCuandoSolos) desdeCuandoSolos = Date.now();
+    const esperando = Date.now() - desdeCuandoSolos;
+
+    // Ocho segundos son de sobra para una negociación normal.
+    if (esperando < 8000) return;
+
+    if (intentosAuto >= 3) {
+      setStatus("No se pudo conectar · usa 🚑 Rescate", false);
+      return;
+    }
+
+    intentosAuto++;
+    desdeCuandoSolos = Date.now();
+    setStatus(`Reconectando sola... (intento ${intentosAuto} de 3)`, false);
+    toast("La conexión no se estableció. Reintentando automáticamente...");
+    reconnectAllPeers();
+  }, 2000);
+
+  unsubscribers.push(detenerVigiaConexion);
+}
+
+function detenerVigiaConexion() {
+  if (vigiaConexion) clearInterval(vigiaConexion);
+  vigiaConexion = null;
+}
+
 /* ===== Control de horario =====
    El aula personal es permanente, y eso abre un hueco: sin control, el
    estudiante de las 3:00 podría entrar a las 2:00 y meterse en la clase de
@@ -1446,6 +1516,7 @@ async function connectRoom() {
   });
 
   setStatus("En sala", true);
+  iniciarVigiaConexion();
   quizasMostrarTips();
 }
 
@@ -1797,6 +1868,9 @@ async function flushCandidates(entry) {
 
 function attachRemoteStream(entry, stream) {
   entry.stream = stream;
+  // Llegó medio de alguien: la conexión funcionó, se reinicia el contador.
+  intentosAuto = 0;
+  desdeCuandoSolos = 0;
 
   if (!entry.tile) {
     entry.tile = document.createElement("div");
