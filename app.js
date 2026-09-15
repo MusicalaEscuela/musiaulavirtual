@@ -1582,9 +1582,10 @@ function mergeState(incoming) {
       }
       return;
     }
-    // Comparar por id (único por lanzamiento): RTDB reordena las claves y un
-    // stringify directo re-renderizaría el escenario con el eco de uno mismo.
-    if (key === "stage" && incoming.stage?.id !== appState.stage?.id) {
+    // Algunos cambios (por ejemplo, añadir un segundo material) conservan el
+    // id para no perder anotaciones. Quien observa debe recibir también esos
+    // cambios, no solo los lanzamientos con un id nuevo.
+    if (key === "stage" && stageSignature(incoming.stage) !== stageSignature(appState.stage)) {
       stageChanged = true;
     }
     appState[key] = incoming[key];
@@ -1599,6 +1600,14 @@ function mergeState(incoming) {
   renderAula();
   renderResources();
   if (stageChanged) renderStage();
+}
+
+// RTDB no garantiza el orden de las claves. La firma ordenada detecta cambios
+// reales del escenario sin re-renderizar por el eco de una escritura propia.
+function stageSignature(value) {
+  if (value == null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stageSignature).join(",")}]`;
+  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stageSignature(value[key])}`).join(",")}}`;
 }
 
 function setStatus(text, online) {
@@ -1752,10 +1761,10 @@ function createPeerFor(id, info = {}, { asOfferer = false } = {}) {
     localStream?.getTracks().forEach(track => pc.addTrack(track, localStream));
   }
 
-  // Sin tracks propios no habría nada que negociar y la conexión llegaría
-  // muda y a oscuras. Al ofrecer hay que pedir explícitamente "solo recibir".
-  // Al responder no hace falta: la oferta del otro ya trae los canales.
-  if (!localStream && asOfferer) {
+  // El observador es siempre una conexión de solo recepción. Declararlo tanto
+  // al ofrecer como al responder evita depender de quién abrió la llamada y
+  // garantiza que vea y escuche la misma clase que el estudiante.
+  if (isObserver() || (!localStream && asOfferer)) {
     try {
       pc.addTransceiver("audio", { direction: "recvonly" });
       pc.addTransceiver("video", { direction: "recvonly" });
@@ -2537,6 +2546,18 @@ function renderStage() {
 
   const close = dom.stageArea.querySelector("[data-stage-close]");
   if (close) close.addEventListener("click", clearStage);
+
+  // Coordinación recibe exactamente el escenario del estudiante, pero en modo
+  // lectura: puede comprobar cada proyección sin responder ni cambiar la clase.
+  lockObserverStage();
+}
+
+function lockObserverStage() {
+  if (!isObserver() || !dom.stageArea) return;
+  dom.stageArea.querySelectorAll("button, input, select, textarea").forEach(control => {
+    control.disabled = true;
+    control.setAttribute("aria-disabled", "true");
+  });
 }
 
 /* ===== Juego de pulso =====
