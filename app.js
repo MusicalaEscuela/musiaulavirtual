@@ -10,7 +10,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { firebaseConfig } from "./firebase-config.js";
 import { loadBiblioteca } from "./biblioteca.js?v=4";
-import { isAuthorizedTeacher } from "./docentes-hub.js?v=3";
+import { isAuthorizedTeacher, sugerenciasDeCorreo, recordarCorreo } from "./docentes-hub.js?v=4";
 import { personalRoomFor, isAdminEmail } from "./sala.js?v=1";
 import { estadoDeSala, textoCuando, proximaOcurrencia, ABRE_ANTES_MIN } from "./agenda-core.js?v=1";
 import { cargarApiYouTube, idDeYouTube, posicionEsperada } from "./reproductor.js?v=1";
@@ -159,6 +159,7 @@ function init() {
 
   setupEvents();
   renderAll();
+  llenarCorreosDocentes();
 
   if (roomParam) {
     pendingAutoJoin = { room: roomParam, name: nameParam, role: roleParam };
@@ -242,6 +243,9 @@ async function setupPersonalRoom(email) {
     dom.personalRoomCard?.classList.add("hidden");
     return;
   }
+
+  recordarCorreo(email, check.data?.name);
+  if (!dom.displayName.value && check.data?.name) dom.displayName.value = check.data.name;
 
   personalRoom = personalRoomFor(email, check.data);
   if (!personalRoom) return;
@@ -739,7 +743,41 @@ function authError(error) {
   toast(AUTH_ERRORS[error?.code] || "No se pudo iniciar sesión. Intenta de nuevo.");
 }
 
+// Llena la lista de correos que ofrece el campo de inicio de sesión.
+// Si no hay ninguno (equipo nuevo y Hub sin responder) se esconde el aviso
+// para no prometer una lista que no está.
+let docentesConocidos = [];
+
+async function llenarCorreosDocentes() {
+  if (!dom.teacherEmails) return;
+  try {
+    docentesConocidos = await sugerenciasDeCorreo();
+  } catch (error) {
+    console.warn("No se pudieron cargar los correos sugeridos", error);
+    docentesConocidos = [];
+  }
+  dom.teacherEmails.innerHTML = "";
+  docentesConocidos.forEach(d => {
+    const option = document.createElement("option");
+    option.value = d.email;
+    if (d.name) option.label = d.name;
+    dom.teacherEmails.appendChild(option);
+  });
+  dom.authEmailHint?.classList.toggle("hidden", docentesConocidos.length === 0);
+}
+
+// Al elegir un correo de la lista, el nombre del docente ya queda escrito.
+function nombreDelCorreo(email) {
+  const normalized = String(email || "").trim().toLowerCase();
+  return docentesConocidos.find(d => d.email === normalized)?.name || "";
+}
+
 function setupAuthEvents() {
+  dom.authEmail.addEventListener("change", () => {
+    const nombre = nombreDelCorreo(dom.authEmail.value);
+    if (nombre && !dom.displayName.value) dom.displayName.value = nombre;
+  });
+
   dom.googleLogin.addEventListener("click", () => {
     signInWithPopup(auth, new GoogleAuthProvider()).catch(authError);
   });
@@ -799,7 +837,7 @@ function bindDom() {
     "biblioCategoria", "biblioNivel", "biblioList", "biblioMore",
     "chatForm", "chatInput",
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
-    "registerBtn", "resetPassword", "logoutBtn", "userBadge",
+    "registerBtn", "resetPassword", "logoutBtn", "userBadge", "teacherEmails", "authEmailHint",
     "personalRoomCard", "personalRoomName", "copyPersonalLink", "usePersonalRoom",
     "observerPanel", "observerList",
     "waitRoom", "waitTitle", "waitWhen", "waitHint", "waitCountdown",

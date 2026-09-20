@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Sacramento&display=swap" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=26" />
+  <link rel="stylesheet" href="./styles.css?v=27" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -34,7 +34,9 @@
       <form id="emailForm" class="email-form">
         <label>
           Correo
-          <input id="authEmail" type="email" autocomplete="email" placeholder="tu@correo.com" required />
+          <input id="authEmail" type="email" autocomplete="email" placeholder="tu@correo.com" list="teacherEmails" required />
+          <datalist id="teacherEmails"></datalist>
+          <p class="hint" id="authEmailHint">Si eres docente, toca el campo: aparece la lista de correos registrados.</p>
         </label>
         <label>
           Contraseña
@@ -521,6 +523,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=38"></script>
+  <script type="module" src="./app.js?v=39"></script>
 </body>
 </html>

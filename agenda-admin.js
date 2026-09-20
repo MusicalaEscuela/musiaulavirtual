@@ -9,7 +9,7 @@ import { personalRoomFor, isAdminEmail, ADMIN_EMAILS } from "./sala.js?v=1";
 import { nombreDia, textoCuando, proximaOcurrencia } from "./agenda-core.js?v=1";
 import {
   hubAuth, onHubUser, signInHub, listTeachers, saveTeacher, removeTeacher
-} from "./docentes-hub.js?v=3";
+} from "./docentes-hub.js?v=4";
 
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
