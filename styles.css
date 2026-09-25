@@ -1674,14 +1674,16 @@ body.mode-danza .music-only { display: none !important; }
 }
 
 .mic-boost {
-  position: absolute;
-  bottom: 78px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 6;
+  /* Es una fila propia: antes flotaba sobre los botones de cámara, pantalla y
+     rescate, por lo que en tablet/celular se debía pelear con ellos para mover
+     el deslizador. */
+  position: static;
   display: flex;
   align-items: center;
   gap: 10px;
+  width: fit-content;
+  max-width: calc(100% - 16px);
+  margin: 4px auto 10px;
   padding: 8px 14px;
   border-radius: 999px;
   background: rgba(12, 6, 22, 0.82);
@@ -1694,15 +1696,13 @@ body.mode-danza .music-only { display: none !important; }
 .mic-boost input[type="range"] { width: clamp(90px, 18vw, 160px); }
 .mic-boost span { font-weight: 700; min-width: 2.2rem; text-align: right; }
 
-/* Con el recurso proyectado la barra sigue al pie, encima de los controles. */
+/* Con el recurso proyectado la barra sigue siendo una fila independiente. */
 .focus-mode .mic-boost {
-  position: fixed;
-  bottom: 72px;
-  z-index: 40;
+  position: static;
 }
 
 @media (max-width: 640px) {
-  .mic-boost { bottom: 70px; padding: 6px 10px; gap: 6px; font-size: 0.72rem; }
+  .mic-boost { padding: 6px 10px; gap: 6px; font-size: 0.72rem; }
   .mic-boost label { display: none; }
 }
 
