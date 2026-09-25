@@ -502,10 +502,10 @@ textarea:focus {
   z-index: 6;
 }
 
-/* En celular los nueve controles con nombre no caben en una fila y, flotando
-   sobre el video, lo tapaban por completo. Aquí bajan a su propia franja
-   debajo del video: ocupan sitio, pero no esconden a nadie. */
-@media (max-width: 760px) {
+/* En celular y tablet los controles pueden ocupar varias filas. En vez de
+   flotar encima de la videollamada, bajan a su propia franja: así se pueden
+   tocar todos, incluso en horizontal, sin esconder a la otra persona. */
+@media (max-width: 1100px) {
   .video-controls {
     position: static;
     transform: none;

@@ -4733,6 +4733,21 @@ function beatOffset(tServerMs) {
 async function toggleMusicMode() {
   // Este camino vuelve a pedir el micrófono: para el observador, ni empezar.
   if (isObserver()) return;
+
+  // El navegador no expone un dato fiable que diga si hay audífonos conectados.
+  // Sin ellos el modo instrumento (que conserva el sonido real) necesariamente
+  // apaga la cancelación de eco y puede convertir los parlantes en feedback.
+  // Pedimos la confirmación ANTES de cambiar el micrófono, no después de que
+  // empiece el problema.
+  if (!musicMode && participantsCount > 1) {
+    const usaAudifonos = window.confirm(
+      "Vas a activar Instrumento sin cancelación de eco. Para evitar feedback, confirma que usas audífonos.\n\nAceptar: sí uso audífonos, activar Instrumento.\nCancelar: quedarme en Modo voz."
+    );
+    if (!usaAudifonos) {
+      toast("Se mantiene Modo voz para evitar feedback. Conecta audífonos antes de usar Instrumento.");
+      return;
+    }
+  }
   musicMode = !musicMode;
   renderAudioMode();
 
