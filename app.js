@@ -1533,10 +1533,15 @@ async function connectRoom() {
     unsubscribers.push(() => clearInterval(vigia));
   }
 
+  // El chat es de ESTA clase: se abre la sesión antes de escuchar, para no
+  // arrastrar los mensajes de la clase anterior en la misma sala.
+  await abrirSesionDeChat();
+
   // Respuestas: cola compartida, cada una llega una sola vez.
   listen(query(ref(db, `${roomPath}/responses`), limitToLast(30)), null, snap => {
     const response = snap.val();
-    if (!response || appState.responses.some(r => r.id === response.id)) return;
+    if (!response || response.session !== chatSession) return;
+    if (appState.responses.some(r => r.id === response.id)) return;
     appState.responses.unshift(response);
     saveLocal();
     renderResponses();
@@ -1576,6 +1581,60 @@ function syncFullState() {
   set(ref(db, `${roomPath}/live`), publicState()).catch(console.warn);
 }
 
+/* ===== Chat: una conversación por clase, no un historial eterno =====
+   El aula personal del docente es siempre la misma sala, así que los mensajes
+   guardados en rooms/<sala>/responses se veían clase tras clase (y de un
+   estudiante a otro). Ahora cada clase abre su propia "sesión de chat": los
+   mensajes quedan sellados con ella y solo se muestran los de la sesión
+   vigente. Al abrir una sesión nueva se borran los mensajes viejos de la
+   base, que además crecían sin límite.
+
+   Quién abre sesión nueva: el docente, y solo si está entrando solo (nadie
+   más en la sala) o si la sesión que hay ya está vencida. Así un docente que
+   recarga en media clase NO borra el chat: el estudiante sigue presente. */
+
+const CHAT_SESION_VENCIDA_MS = 90 * 60 * 1000; // 1h30: ninguna clase dura más
+let chatSession = null;
+
+async function abrirSesionDeChat() {
+  const sesionRef = ref(db, `${roomPath}/chatSession`);
+  let sesion = null;
+  try {
+    sesion = (await get(sesionRef)).val();
+  } catch (error) {
+    console.warn("No se pudo leer la sesión de chat", error);
+  }
+
+  const inicio = Number(sesion?.startedAt) || 0;
+  const vencida = !inicio || Date.now() - inicio > CHAT_SESION_VENCIDA_MS;
+
+  if (appState.role === "docente") {
+    let otros = 0;
+    try {
+      const snap = await get(ref(db, `${roomPath}/participants`));
+      Object.keys(snap.val() || {}).forEach(id => { if (id !== CLIENT_ID) otros += 1; });
+    } catch (error) {
+      console.warn("No se pudo mirar quién está en la sala", error);
+      otros = 1; // ante la duda, no borrar nada
+    }
+
+    if (vencida || otros === 0) {
+      const nueva = { startedAt: Date.now(), by: appState.displayName };
+      try {
+        await remove(ref(db, `${roomPath}/responses`));
+        await set(sesionRef, nueva);
+        sesion = nueva;
+      } catch (error) {
+        console.warn("No se pudo abrir la sesión de chat", error);
+      }
+    }
+  }
+
+  chatSession = Number(sesion?.startedAt) || Date.now();
+  appState.responses = [];
+  renderResponses();
+}
+
 function sendResponse(text, extra = {}) {
   const response = {
     id: cryptoId(),
@@ -1583,6 +1642,7 @@ function sendResponse(text, extra = {}) {
     role: appState.role,
     text,
     at: new Date().toISOString(),
+    session: chatSession,
     ...extra
   };
 
@@ -4869,8 +4929,10 @@ async function updateStats() {
 }
 
 function saveLocal() {
+  // El chat no se guarda en el equipo: es de la clase, no del navegador.
+  const { responses, ...guardable } = appState;
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    ...appState,
+    ...guardable,
     savedAt: new Date().toISOString()
   }));
 }
@@ -4885,7 +4947,7 @@ function loadLocal() {
       ...parsed,
       stage: null,
       resources: Array.isArray(parsed.resources) && parsed.resources.length ? parsed.resources : defaultResources,
-      responses: Array.isArray(parsed.responses) ? parsed.responses : []
+      responses: []
     };
   } catch (error) {
     console.warn("No se pudo cargar localStorage", error);
