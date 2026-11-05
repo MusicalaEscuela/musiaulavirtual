@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Sacramento&display=swap" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=28" />
+  <link rel="stylesheet" href="./styles.css?v=29" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -214,6 +214,31 @@
             <small>Si ya entraron y no se ven, espera unos segundos: la clase se reconecta sola. Si no, toca 🚑 Rescate.</small>
           </div>
           <video id="localVideo" autoplay playsinline muted></video>
+
+          <!-- Pizarrón sobre la pantalla compartida: solo lo ve el docente.
+               Lo que dibuja aquí se mezcla con la imagen de su pantalla ANTES
+               de enviarla, así que al estudiante le llega ya marcada y
+               perfectamente alineada, sin importar su dispositivo. -->
+          <div id="screenPaint" class="screen-paint hidden">
+            <div class="screen-paint-head">
+              <strong>✏️ Marcando sobre tu pantalla</strong>
+              <span class="hint">Esto es exactamente lo que ve la clase. Si te vas a otra ventana, siguen viendo tu pantalla, pero sin las marcas.</span>
+              <button type="button" id="screenPaintClose" class="ghost tiny">✕ Cerrar</button>
+            </div>
+            <div class="screen-paint-stage">
+              <canvas id="screenPaintCanvas"></canvas>
+              <input id="screenPaintInput" class="screen-paint-input hidden" type="text"
+                     placeholder="Escribe y Enter" autocomplete="off" />
+            </div>
+            <div class="screen-paint-tools">
+              <button type="button" class="secondary tiny on" data-spt="draw">✏️ Dibujar</button>
+              <button type="button" class="secondary tiny" data-spt="flecha">↗ Flecha</button>
+              <button type="button" class="secondary tiny" data-spt="texto">🔤 Texto</button>
+              <span class="screen-paint-colors" id="screenPaintColors"></span>
+              <button type="button" class="ghost tiny" id="screenPaintUndo">↶ Deshacer</button>
+              <button type="button" class="ghost tiny" id="screenPaintClear">🧽 Limpiar</button>
+            </div>
+          </div>
           <div id="statsPanel" class="stats-panel hidden"></div>
         </div>
           <div class="video-controls">
@@ -231,6 +256,9 @@
             </button>
             <button id="shareScreen" class="vc-btn teacher-only" title="Compartir tu pantalla (tu cámara vuelve al terminar)">
               <span class="vc-ico">🖥️</span><span class="vc-label">Pantalla</span>
+            </button>
+            <button id="screenPaintBtn" class="vc-btn teacher-only hidden" title="Escribir, dibujar y señalar encima de la pantalla que estás compartiendo">
+              <span class="vc-ico">✏️</span><span class="vc-label">Marcar</span>
             </button>
             <button id="shareAudioOnly" class="vc-btn teacher-only" title="Compartir SOLO el audio de una pestaña; tu cámara sigue viéndose">
               <span class="vc-ico">🔈</span><span class="vc-label">Solo audio</span>
@@ -523,6 +551,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=41"></script>
+  <script type="module" src="./app.js?v=42"></script>
 </body>
 </html>

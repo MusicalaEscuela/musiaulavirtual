@@ -833,7 +833,9 @@ function bindDom() {
     "videoArea", "videoGrid", "remotePlaceholder", "localVideo",
     "toggleMic", "toggleCam", "toggleMusicMode", "toggleSpeaker", "audioModeChip",
     "micBoostBar", "micBoost", "micBoostValue", "toggleStats", "statsPanel", "reconnectVideo", "reloadClass",
-    "shareScreen", "shareAudioOnly", "biblioRefresh", "biblioStatus", "biblioSearch", "biblioArea",
+    "shareScreen", "shareAudioOnly", "screenPaintBtn", "screenPaint", "screenPaintCanvas",
+    "screenPaintClose", "screenPaintColors", "screenPaintUndo", "screenPaintClear",
+    "screenPaintInput", "biblioRefresh", "biblioStatus", "biblioSearch", "biblioArea",
     "biblioCategoria", "biblioNivel", "biblioList", "biblioMore",
     "chatForm", "chatInput",
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
@@ -1170,6 +1172,7 @@ function setupEvents() {
   });
 
   dom.shareScreen.addEventListener("click", toggleScreenShare);
+  dom.screenPaintBtn?.addEventListener("click", toggleMarcarPantalla);
   dom.shareAudioOnly.addEventListener("click", toggleAudioOnlyShare);
 
   // Modo baile: compartir música usa el mismo flujo de compartir pantalla,
@@ -1873,7 +1876,7 @@ function createPeerFor(id, info = {}, { asOfferer = false } = {}) {
 
   // Si ya estoy compartiendo pantalla o música, quien entra tarde recibe
   // esos tracks en lugar de la cámara y el micrófono puros.
-  const screenTrack = isObserver() ? null : screenStream?.getVideoTracks()[0];
+  const screenTrack = isObserver() ? null : trackDePantallaQueSeEnvia();
   if (screenTrack) {
     pc.getSenders().find(s => s.track?.kind === "video")?.replaceTrack(screenTrack).catch(() => {});
   }
@@ -2102,11 +2105,308 @@ async function toggleScreenShare() {
   dom.localVideo.srcObject = screenStream;
   dom.shareScreen.classList.add("on");
   setBtn(dom.shareScreen, "⏹", "Dejar pantalla");
+  dom.screenPaintBtn?.classList.remove("hidden"); // ya hay algo que marcar
   // El navegador tiene su propio botón "Dejar de compartir": lo escuchamos.
   screenTrack.onended = () => stopScreenShare();
   toast(sent
     ? "Compartiendo pantalla con la clase."
     : "Compartiendo pantalla. Se enviará cuando alguien se conecte.");
+}
+
+
+/* ===== Marcar encima de la pantalla compartida =====
+   No se manda un "dibujo aparte" que el otro lado tenga que encajar sobre el
+   video: se mezcla ANTES de enviar. La pantalla se pinta en un canvas, encima
+   se pintan las marcas, y lo que viaja por la llamada es ese canvas
+   (captureStream). Dos ventajas que valen el truco:
+
+   - Queda alineado al pixel en cualquier pantalla, también en el celular del
+     estudiante, sin coordenadas ni sincronía que se pueda desfasar.
+   - El estudiante no necesita nada nuevo: le llega como video de siempre.
+
+   El lienzo que ve el docente ES el que se envía, así que lo que ve es
+   exactamente lo que ve la clase. Mientras no se use "Marcar", se envía el
+   track crudo de la pantalla y no se gasta nada de procesador. */
+
+let marcar = null; // { video, canvas, ctx, stream, raf, marcas, trazo }
+let marcarTool = "draw";
+let marcarColor = "#e0218a";
+let marcarMontado = false;
+
+// El track de video que debe salir hacia la clase mientras se comparte.
+function trackDePantallaQueSeEnvia() {
+  return marcar?.stream?.getVideoTracks()[0] || screenStream?.getVideoTracks()[0] || null;
+}
+
+function toggleMarcarPantalla() {
+  if (marcar) {
+    cerrarMarcarPantalla();
+    return;
+  }
+  abrirMarcarPantalla().catch(error => {
+    console.warn("No se pudo abrir el pizarrón de pantalla", error);
+    toast("No se pudieron abrir las herramientas para marcar.");
+    cerrarMarcarPantalla(true);
+  });
+}
+
+async function abrirMarcarPantalla() {
+  if (!screenStream || !dom.screenPaintCanvas) return;
+
+  const track = screenStream.getVideoTracks()[0];
+  if (!track) return;
+
+  const ajustes = track.getSettings?.() || {};
+  // Se limita a 1080p: más resolución no se nota en una clase y sí se nota en
+  // el ventilador del computador.
+  const escala = Math.min(1, 1920 / (ajustes.width || 1280), 1080 / (ajustes.height || 720));
+  const ancho = Math.max(2, Math.round((ajustes.width || 1280) * escala / 2) * 2);
+  const alto = Math.max(2, Math.round((ajustes.height || 720) * escala / 2) * 2);
+
+  const video = document.createElement("video");
+  video.srcObject = new MediaStream([track]);
+  video.muted = true;
+  video.playsInline = true;
+  await video.play().catch(() => {});
+
+  const canvas = dom.screenPaintCanvas;
+  canvas.width = ancho;
+  canvas.height = alto;
+  const ctx = canvas.getContext("2d");
+
+  marcar = { video, canvas, ctx, stream: null, raf: null, marcas: [], trazo: null };
+
+  const pintarMarca = m => {
+    ctx.strokeStyle = m.color;
+    ctx.fillStyle = m.color;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = Math.max(2, canvas.height * 0.005);
+
+    if (m.tipo === "trazo" && m.pts.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(m.pts[0].x * canvas.width, m.pts[0].y * canvas.height);
+      for (let i = 1; i < m.pts.length; i++) {
+        ctx.lineTo(m.pts[i].x * canvas.width, m.pts[i].y * canvas.height);
+      }
+      ctx.stroke();
+      return;
+    }
+
+    if (m.tipo === "flecha") {
+      const x1 = m.x1 * canvas.width, y1 = m.y1 * canvas.height;
+      const x2 = m.x2 * canvas.width, y2 = m.y2 * canvas.height;
+      const ang = Math.atan2(y2 - y1, x2 - x1);
+      const punta = Math.max(10, canvas.height * 0.025);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x2, y2);
+      ctx.lineTo(x2 - punta * Math.cos(ang - Math.PI / 7), y2 - punta * Math.sin(ang - Math.PI / 7));
+      ctx.lineTo(x2 - punta * Math.cos(ang + Math.PI / 7), y2 - punta * Math.sin(ang + Math.PI / 7));
+      ctx.closePath();
+      ctx.fill();
+      return;
+    }
+
+    if (m.tipo === "texto") {
+      const tam = Math.max(14, canvas.height * 0.045);
+      ctx.font = `700 ${tam}px "Roboto", system-ui, sans-serif`;
+      ctx.textBaseline = "top";
+      // Fondo oscuro detrás: sobre una partitura blanca el texto a secas se pierde.
+      const anchoTexto = ctx.measureText(m.texto).width;
+      ctx.fillStyle = "rgba(10, 10, 28, 0.72)";
+      ctx.fillRect(m.x * canvas.width - 6, m.y * canvas.height - 4, anchoTexto + 12, tam * 1.25);
+      ctx.fillStyle = m.color;
+      ctx.fillText(m.texto, m.x * canvas.width, m.y * canvas.height);
+    }
+  };
+
+  const frame = () => {
+    if (!marcar) return;
+    try {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    } catch {
+      // Un frame que todavía no llega: se reintenta en el siguiente.
+    }
+    marcar.marcas.forEach(pintarMarca);
+    if (marcar.trazo) pintarMarca(marcar.trazo);
+    marcar.raf = requestAnimationFrame(frame);
+  };
+  frame();
+
+  // Lo que viaja a la clase pasa a ser el lienzo, no la pantalla pelada.
+  marcar.stream = canvas.captureStream(15);
+  const pintado = marcar.stream.getVideoTracks()[0];
+  if (pintado) {
+    forEachSender("video", sender => sender.replaceTrack(pintado).catch(console.warn));
+  }
+
+  // Si el docente se va a otra ventana, el navegador congela el lienzo (deja
+  // de pedir cuadros) y la clase se quedaria viendo una foto fija. Mientras
+  // esta de espaldas se envia la pantalla cruda, que el sistema sigue
+  // capturando igual, y al volver se retoma el lienzo con sus marcas.
+  const alCambiarVisibilidad = () => {
+    if (!marcar) return;
+    const destino = document.hidden
+      ? screenStream?.getVideoTracks()[0]
+      : marcar.stream?.getVideoTracks()[0];
+    if (destino) forEachSender("video", sender => sender.replaceTrack(destino).catch(() => {}));
+  };
+  document.addEventListener("visibilitychange", alCambiarVisibilidad);
+  marcar.soltarVisibilidad = () =>
+    document.removeEventListener("visibilitychange", alCambiarVisibilidad);
+
+  dom.screenPaint?.classList.remove("hidden");
+  dom.screenPaintBtn?.classList.add("on");
+  montarHerramientasDeMarcar();
+  toast("Dibuja sobre tu pantalla: la clase ve las marcas al instante.");
+}
+
+function cerrarMarcarPantalla(silencioso = false) {
+  if (!marcar) return;
+  cancelAnimationFrame(marcar.raf);
+  marcar.soltarVisibilidad?.();
+  marcar.stream?.getTracks().forEach(t => t.stop());
+  try { marcar.video.srcObject = null; } catch {}
+  marcar = null;
+
+  // Vuelve a salir la pantalla cruda (si se sigue compartiendo).
+  const crudo = screenStream?.getVideoTracks()[0];
+  if (crudo) forEachSender("video", sender => sender.replaceTrack(crudo).catch(console.warn));
+
+  dom.screenPaint?.classList.add("hidden");
+  dom.screenPaintBtn?.classList.remove("on");
+  dom.screenPaintInput?.classList.add("hidden");
+  if (!silencioso) toast("Dejaste de marcar. Tu pantalla sigue compartida.");
+}
+
+function montarHerramientasDeMarcar() {
+  const canvas = dom.screenPaintCanvas;
+  if (!canvas) return;
+
+  // Los colores se pintan una sola vez. El rosado va primero: es el que más
+  // se ve sobre una partitura o una diapositiva clara.
+  if (dom.screenPaintColors && !dom.screenPaintColors.children.length) {
+    const orden = [...TIZAS].sort((a, b) =>
+      (a.color === "#e0218a" ? -1 : 0) - (b.color === "#e0218a" ? -1 : 0));
+    orden.forEach((tiza, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.style.background = tiza.color;
+      btn.title = tiza.nombre;
+      if (i === 0) btn.classList.add("on");
+      btn.addEventListener("click", () => {
+        marcarColor = tiza.color;
+        [...dom.screenPaintColors.children].forEach(b => b.classList.toggle("on", b === btn));
+      });
+      dom.screenPaintColors.appendChild(btn);
+    });
+    marcarColor = orden[0].color;
+  }
+
+  if (marcarMontado) return;
+  marcarMontado = true;
+
+  dom.screenPaint.querySelectorAll("[data-spt]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      marcarTool = btn.dataset.spt;
+      dom.screenPaint.querySelectorAll("[data-spt]").forEach(b => b.classList.toggle("on", b === btn));
+      dom.screenPaintInput?.classList.add("hidden");
+    });
+  });
+
+  dom.screenPaintUndo?.addEventListener("click", () => {
+    if (marcar?.marcas.length) marcar.marcas.pop();
+  });
+
+  dom.screenPaintClear?.addEventListener("click", () => {
+    if (marcar) marcar.marcas = [];
+  });
+
+  dom.screenPaintClose?.addEventListener("click", () => cerrarMarcarPantalla());
+
+  // Coordenadas 0..1 sobre el lienzo, no sobre la pantalla del docente: así
+  // valen igual al tamaño que se esté viendo.
+  const norm = e => {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+      y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))
+    };
+  };
+
+  canvas.addEventListener("pointerdown", e => {
+    if (!marcar) return;
+    const p = norm(e);
+
+    if (marcarTool === "texto") {
+      abrirTextoDeMarca(p, e);
+      return;
+    }
+
+    try { canvas.setPointerCapture(e.pointerId); } catch {}
+    marcar.trazo = marcarTool === "flecha"
+      ? { tipo: "flecha", x1: p.x, y1: p.y, x2: p.x, y2: p.y, color: marcarColor }
+      : { tipo: "trazo", pts: [p], color: marcarColor };
+  });
+
+  canvas.addEventListener("pointermove", e => {
+    if (!marcar?.trazo) return;
+    const p = norm(e);
+    if (marcar.trazo.tipo === "flecha") {
+      marcar.trazo.x2 = p.x;
+      marcar.trazo.y2 = p.y;
+    } else {
+      marcar.trazo.pts.push(p);
+    }
+  });
+
+  const soltar = () => {
+    if (!marcar?.trazo) return;
+    const t = marcar.trazo;
+    marcar.trazo = null;
+    // Un clic suelto no deja basura en la pantalla de la clase.
+    if (t.tipo === "trazo" && t.pts.length < 2) return;
+    if (t.tipo === "flecha" && Math.hypot(t.x2 - t.x1, t.y2 - t.y1) < 0.01) return;
+    marcar.marcas.push(t);
+  };
+  canvas.addEventListener("pointerup", soltar);
+  canvas.addEventListener("pointercancel", soltar);
+}
+
+// Cuadro de texto: se escribe donde se tocó y queda al dar Enter.
+function abrirTextoDeMarca(pos, evento) {
+  const input = dom.screenPaintInput;
+  const canvas = dom.screenPaintCanvas;
+  if (!input || !canvas) return;
+
+  const rPadre = (input.offsetParent || canvas).getBoundingClientRect();
+  input.style.left = `${evento.clientX - rPadre.left}px`;
+  input.style.top = `${evento.clientY - rPadre.top}px`;
+  input.style.color = marcarColor;
+  input.value = "";
+  input.classList.remove("hidden");
+  input.focus();
+
+  const cerrar = () => {
+    input.classList.add("hidden");
+    input.onkeydown = null;
+    input.onblur = null;
+  };
+
+  input.onkeydown = e => {
+    if (e.key === "Escape") { cerrar(); return; }
+    if (e.key !== "Enter") return;
+    const texto = input.value.trim();
+    if (texto && marcar) {
+      marcar.marcas.push({ tipo: "texto", x: pos.x, y: pos.y, texto, color: marcarColor });
+    }
+    cerrar();
+  };
+  input.onblur = cerrar;
 }
 
 
@@ -2174,6 +2474,8 @@ function stopAudioOnlyShare(silent = false) {
 
 function stopScreenShare(silent = false) {
   if (!screenStream) return;
+  cerrarMarcarPantalla(true);
+  dom.screenPaintBtn?.classList.add("hidden");
   stopMusicMix();
   screenStream.getTracks().forEach(track => track.stop());
   screenStream = null;

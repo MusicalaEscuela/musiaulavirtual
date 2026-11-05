@@ -2372,3 +2372,72 @@ body.mode-danza .music-only { display: none !important; }
 }
 .focus-mode .stage-pdf { height: 74vh; }
 .stage-split.dos .stage-pdf { height: 44vh; }
+
+/* ===== Pizarrón sobre la pantalla compartida =====
+   El lienzo que ve el docente ES el que se está enviando: lo que dibuja ya
+   viene mezclado con la imagen, así que no hay nada que sincronizar y al
+   estudiante le llega alineado al pixel. */
+.screen-paint {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem;
+  background: rgba(10, 10, 28, 0.94);
+  border-radius: 16px;
+}
+.screen-paint.hidden { display: none; }
+.screen-paint-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.screen-paint-head .hint { margin: 0; flex: 1; }
+.screen-paint-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+}
+#screenPaintCanvas {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 10px;
+  background: #000;
+  cursor: crosshair;
+  touch-action: none;
+}
+.screen-paint-input {
+  position: absolute;
+  z-index: 3;
+  min-width: 12ch;
+  padding: 0.3rem 0.5rem;
+  border-radius: 8px;
+  border: 2px solid var(--brand, #e0218a);
+  font: 700 1rem/1.2 "Roboto", system-ui, sans-serif;
+}
+.screen-paint-input.hidden { display: none; }
+.screen-paint-tools {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+.screen-paint-colors { display: inline-flex; gap: 0.3rem; }
+.screen-paint-colors button {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  padding: 0;
+  cursor: pointer;
+}
+.screen-paint-colors button.on {
+  border-color: #fff;
+  transform: scale(1.15);
+}
