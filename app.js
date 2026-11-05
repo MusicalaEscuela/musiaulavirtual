@@ -3507,10 +3507,16 @@ function buildResourceEmbed(url) {
 
   if (/\.(png|jpe?g|gif|webp|svg)(\?|$)/i.test(url)) return { type: "image", src: url };
 
-  // PDF directo: el visor de Google lo incrusta de forma fiable aunque venga
-  // de otro dominio (un <iframe> al PDF crudo suele bloquearse).
+  // PDF: lo dibujamos nosotros con PDF.js para poder pasar de página a la vez
+  // en las dos pantallas. "visor" es el plan B: si el archivo no se deja
+  // descargar desde el navegador (CORS), se cae al visor de Google, que
+  // incrusta bien pero va por su cuenta en cada lado.
   if (/\.pdf(\?|$)/i.test(url)) {
-    return { type: "iframe", src: `https://docs.google.com/viewer?embedded=true&url=${encodeURIComponent(url)}` };
+    return {
+      type: "pdf",
+      src: url,
+      visor: `https://docs.google.com/viewer?embedded=true&url=${encodeURIComponent(url)}`
+    };
   }
 
   // Resto de páginas: se intenta incrustar; si el sitio lo bloquea, queda
@@ -3562,6 +3568,9 @@ function renderResourceStage(stage, isTeacher, closeButton) {
     if (raiz && raiz.querySelector("[data-annot-media]")) {
       setupResourceAnnotations(stage, isTeacher, { raiz, annotId: p.canal });
     }
+    if (raiz && raiz.querySelector("[data-pdf]")) {
+      setupPdfSync(stage, isTeacher, { raiz, canal: p.canal });
+    }
   });
 }
 
@@ -3582,6 +3591,10 @@ function notaDeSincronia(embed) {
     return { clase: "aviso", texto: "Cada quien controla su reproducción: si adelantas o pausas, al estudiante no le pasa lo mismo. Acuerden en voz alta el minuto, o comparte pantalla 🖥️ para que vean lo mismo." };
   }
 
+  if (tipo === "pdf") {
+    return { clase: "ok", texto: "Van en la misma página: cuando pasas de página, al estudiante le pasa sola. Lo que dibujes o señales también lo ve al instante." };
+  }
+
   if (!tipo) return null;
 
   // PDF, documentos y páginas web: todo lo que va dentro de un iframe ajeno.
@@ -3594,7 +3607,16 @@ function panelDeRecurso({ material, lado }, isTeacher, dobles) {
   const embed = material.embed;
   let media = "";
 
-  if (embed?.type === "image" && safeUrl(embed.src)) {
+  if (embed?.type === "pdf" && safeUrl(embed.src)) {
+    media = `
+      <div class="stage-embed stage-pdf" data-pdf
+           data-pdf-src="${escapeHtml(embed.src)}"
+           data-pdf-visor="${escapeHtml(embed.visor || "")}">
+        <canvas data-pdf-canvas></canvas>
+        <p class="pdf-estado" data-pdf-estado>Abriendo el PDF…</p>
+      </div>
+    `;
+  } else if (embed?.type === "image" && safeUrl(embed.src)) {
     media = `<img class="stage-img" src="${escapeHtml(embed.src)}" alt="${escapeHtml(material.title || "Recurso")}" />`;
   } else if (embed?.src && safeUrl(embed.src)) {
     media = `
@@ -3619,6 +3641,18 @@ function panelDeRecurso({ material, lado }, isTeacher, dobles) {
     </div>
   ` : "";
 
+  const esPdf = embed?.type === "pdf" && safeUrl(embed.src);
+  const pdfNav = esPdf && isTeacher ? `
+    <div class="pdf-nav" data-pdf-nav hidden>
+      <button class="secondary tiny" data-pdf-prev>◀ Anterior</button>
+      <span class="pdf-pagina" data-pdf-pagina>—</span>
+      <button class="secondary tiny" data-pdf-next>Siguiente ▶</button>
+    </div>
+  ` : "";
+  const pdfNotaAlumno = esPdf && !isTeacher
+    ? `<p class="sync-note ok" data-pdf-nota-alumno hidden>Vas en la misma página que tu profe: la pasa y aquí pasa sola.</p>`
+    : "";
+
   const sync = isTeacher && media ? notaDeSincronia(embed) : null;
   const notaSync = sync ? `<p class="sync-note ${sync.clase}">${escapeHtml(sync.texto)}</p>` : "";
 
@@ -3639,8 +3673,10 @@ function panelDeRecurso({ material, lado }, isTeacher, dobles) {
           <div class="annot-pointer hidden" data-annot-pointer>👆</div>
         </div>
       ` : ""}
+      ${pdfNav}
       ${tools}
       ${notaSync}
+      ${pdfNotaAlumno}
       ${blockNote}
       ${url ? `<p class="stage-hint"><a class="stage-link" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">Abrir en pestaña nueva ↗</a>${soundNote}</p>` : ""}
       ${!media && !url ? `<p class="stage-hint">Este recurso no tiene enlace para mostrar.</p>` : ""}
@@ -3686,7 +3722,7 @@ const TIPS = [
     icono: "👆",
     quiero: "Señalar algo dentro del material",
     como: "Con el material proyectado: 👆 Señalar mueve un dedo que el estudiante ve, y ✏️ Dibujar raya encima.",
-    porque: "Ojo: si tú bajas el PDF, el estudiante NO baja contigo. Lo que sí ve es lo que señalas o dibujas."
+    porque: "En los PDF van en la misma página: la pasas tú y al estudiante le pasa sola. Lo que señalas o dibujas también lo ve al instante."
   },
   {
     icono: "🎼",
@@ -4258,6 +4294,164 @@ function setFocusMode(on) {
   if (!on) focusCollapsed = false; // al cerrar el recurso se reinicia
   focusWanted = on;
   applyFocus();
+}
+
+/* ===== PDF sincronizado =====
+   El visor de Google incrusta bien, pero va dentro de un iframe de otro
+   dominio: el navegador no deja ver ni mover lo que pasa adentro, así que
+   cada quien lo navegaba por su cuenta. Aquí dibujamos el PDF nosotros con
+   PDF.js sobre un canvas propio, y entonces sí podemos mandar la página por
+   la base de datos: el docente pasa de página y al estudiante le pasa sola.
+
+   Se muestra una página completa a la vez (no scroll) a propósito: así el
+   lienzo de anotaciones coincide exactamente con la página, y lo que el
+   docente señala o dibuja cae en el mismo punto de la otra pantalla.
+
+   Si el archivo no se deja descargar desde el navegador (el servidor no manda
+   cabeceras CORS), se cae solo al visor de Google de siempre: se pierde la
+   sincronía, no la clase. */
+
+const PDFJS_VER = "4.7.76";
+let pdfLibPromise = null;
+
+function cargarPdfJs() {
+  if (!pdfLibPromise) {
+    pdfLibPromise = import(`https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VER}/build/pdf.min.mjs`)
+      .then(lib => {
+        lib.GlobalWorkerOptions.workerSrc =
+          `https://cdn.jsdelivr.net/npm/pdfjs-dist@${PDFJS_VER}/build/pdf.worker.min.mjs`;
+        return lib;
+      })
+      .catch(error => {
+        pdfLibPromise = null; // que el siguiente intento vuelva a probar
+        throw error;
+      });
+  }
+  return pdfLibPromise;
+}
+
+async function setupPdfSync(stage, isTeacher, { raiz, canal } = {}) {
+  const zona = raiz || dom.stageArea;
+  const caja = zona.querySelector("[data-pdf]");
+  if (!caja) return;
+
+  const canvas = caja.querySelector("[data-pdf-canvas]");
+  const estado = caja.querySelector("[data-pdf-estado]");
+  const nav = zona.querySelector("[data-pdf-nav]");
+  const etiqueta = zona.querySelector("[data-pdf-pagina]");
+  const notaAlumno = zona.querySelector("[data-pdf-nota-alumno]");
+  const src = caja.dataset.pdfSrc;
+  const vistaRef = (firebaseReady && roomPath) ? ref(db, `${roomPath}/pdfView/${canal || stage.id}`) : null;
+
+  // Plan B: el visor de Google dentro de un iframe, como antes.
+  const caerAlVisorDeGoogle = () => {
+    const visor = caja.dataset.pdfVisor;
+    if (!visor) {
+      if (estado) estado.textContent = "No se pudo abrir este PDF.";
+      return;
+    }
+    caja.classList.remove("stage-pdf");
+    caja.innerHTML = `<iframe src="${escapeHtml(visor)}" allow="fullscreen" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
+    nav?.remove();
+    notaAlumno?.remove();
+    // El aviso de sincronía se vuelve mentira si caemos aquí: se corrige.
+    const aviso = zona.querySelector(".sync-note");
+    if (aviso) {
+      aviso.className = "sync-note aviso";
+      aviso.textContent = "Este PDF no se deja sincronizar, así que cada quien lo navega por su lado. Para que vea lo tuyo, comparte pantalla 🖥️.";
+    }
+  };
+
+  let doc = null;
+  try {
+    const lib = await cargarPdfJs();
+    doc = await lib.getDocument({ url: src }).promise;
+  } catch (error) {
+    console.warn("No se pudo abrir el PDF con el visor propio", error);
+    caerAlVisorDeGoogle();
+    return;
+  }
+
+  // El escenario pudo cambiar mientras el PDF cargaba.
+  if (!caja.isConnected) {
+    try { doc.destroy(); } catch {}
+    return;
+  }
+
+  estado?.remove();
+  annotUnsubs.push(() => { try { doc.destroy(); } catch {} });
+
+  let pagina = 1;
+  let tarea = null;
+
+  const pintar = async () => {
+    if (!caja.isConnected) return;
+    const p = await doc.getPage(pagina);
+    const box = caja.getBoundingClientRect();
+    const base = p.getViewport({ scale: 1 });
+    // La página entera cabe en la caja: sin scroll, para que lo que se dibuja
+    // encima caiga en el mismo punto en las dos pantallas.
+    const escala = Math.min(box.width / base.width, box.height / base.height) || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const vista = p.getViewport({ scale: escala * dpr });
+
+    canvas.width = Math.round(vista.width);
+    canvas.height = Math.round(vista.height);
+    canvas.style.width = `${Math.round(vista.width / dpr)}px`;
+    canvas.style.height = `${Math.round(vista.height / dpr)}px`;
+
+    if (tarea) { try { tarea.cancel(); } catch {} }
+    tarea = p.render({ canvasContext: canvas.getContext("2d"), viewport: vista });
+    try { await tarea.promise; } catch {}
+    tarea = null;
+  };
+
+  const ponerEtiqueta = () => {
+    if (etiqueta) etiqueta.textContent = `Página ${pagina} de ${doc.numPages}`;
+  };
+
+  const irA = async (n, avisar) => {
+    const destino = Math.min(Math.max(1, Math.round(n) || 1), doc.numPages);
+    if (destino === pagina && avisar !== "forzar") return;
+    pagina = destino;
+    ponerEtiqueta();
+    await pintar();
+    if (avisar && vistaRef) {
+      set(vistaRef, { page: pagina, by: CLIENT_ID, at: Date.now() }).catch(() => {});
+    }
+  };
+
+  await pintar();
+  ponerEtiqueta();
+
+  // Al cambiar el tamaño (girar el celular, pantalla completa) se redibuja.
+  let reTimer = null;
+  const alRedimensionar = () => {
+    clearTimeout(reTimer);
+    reTimer = setTimeout(() => pintar(), 150);
+  };
+  window.addEventListener("resize", alRedimensionar);
+  annotUnsubs.push(() => {
+    window.removeEventListener("resize", alRedimensionar);
+    clearTimeout(reTimer);
+  });
+
+  if (isTeacher) {
+    nav?.removeAttribute("hidden");
+    zona.querySelector("[data-pdf-prev]")?.addEventListener("click", () => irA(pagina - 1, true));
+    zona.querySelector("[data-pdf-next]")?.addEventListener("click", () => irA(pagina + 1, true));
+    // Deja escrita la página de arranque: quien llegue después entra donde va la clase.
+    if (vistaRef) set(vistaRef, { page: pagina, by: CLIENT_ID, at: Date.now() }).catch(() => {});
+    return;
+  }
+
+  notaAlumno?.removeAttribute("hidden");
+  if (vistaRef) {
+    annotUnsubs.push(onValue(vistaRef, snap => {
+      const vista = snap.val();
+      if (vista?.page) irA(vista.page);
+    }));
+  }
 }
 
 function clearAnnotations() {

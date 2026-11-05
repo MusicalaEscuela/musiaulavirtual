@@ -1,0 +1,13 @@
+[
+  {
+    "origin": [
+      "https://musiaula-virtual.web.app",
+      "https://musiaula-virtual.firebaseapp.com",
+      "http://localhost:5000",
+      "http://localhost:8080"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Content-Length", "Content-Range", "Accept-Ranges"],
+    "maxAgeSeconds": 3600
+  }
+]
