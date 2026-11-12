@@ -267,9 +267,20 @@ async function setupPersonalRoom(email) {
 // Lista de a quién se le puede echar una mano. Solo la ve coordinación.
 function renderRemoteHelp() {
   if (!dom.remoteHelp) return;
-  const puede = isObserver() && isAdminEmail(currentUser?.email);
+  const puede = puedoAyudar();
   dom.remoteHelp.classList.toggle("hidden", !puede);
   if (!puede) return;
+
+  const esDocente = appState.role === "docente";
+  const acciones = esDocente
+    ? ACCIONES_DOCENTE
+    : Object.fromEntries(Object.entries(ACCIONES_REMOTAS).map(([k, d]) => [k, d.etiqueta]));
+  const titulo = dom.remoteHelp.querySelector(".label");
+  const pista = dom.remoteHelp.querySelector(".hint");
+  if (titulo) titulo.textContent = esDocente ? "Ayudar al estudiante" : "Auxilio remoto";
+  if (pista) pista.textContent = esDocente
+    ? "Mira si te ve, te oye y le suena la clase. Si falta algo, pídeselo: le sale una ventana grande con un solo botón y los pasos para su navegador."
+    : "Arréglale los controles a quien se atascó. Se le avisa siempre en pantalla.";
 
   const gente = Object.entries(lastParticipants || {})
     .filter(([id, p]) => id !== CLIENT_ID && p?.role !== "observador");
@@ -283,10 +294,11 @@ function renderRemoteHelp() {
     <div class="remote-target">
       <strong>${escapeHtml(p.name || "Participante")}</strong>
       <span class="agenda-chip">${escapeHtml(p.role || "")}</span>
+      <div class="media-chips">${chipsDeMedios(p.medios)}</div>
       <div class="actions wrap">
-        ${Object.entries(ACCIONES_REMOTAS).map(([accion, def]) => `
-          <button class="${def.pregunta ? "ghost" : "secondary"} tiny"
-                  data-remote="${escapeHtml(id)}|${accion}">${escapeHtml(def.etiqueta)}</button>
+        ${Object.entries(acciones).map(([accion, etiqueta]) => `
+          <button class="${ACCIONES_REMOTAS[accion]?.pregunta ? "secondary" : "ghost"} tiny"
+                  data-remote="${escapeHtml(id)}|${accion}">${escapeHtml(etiqueta)}</button>
         `).join("")}
       </div>
     </div>
@@ -327,8 +339,23 @@ const ACCIONES_REMOTAS = {
   "reconectar":    { etiqueta: "Reconectar video",        aviso: "reinició tu conexión de video" },
   // Estas dos ENCIENDEN captura: no se aplican solas, se preguntan.
   "pedir-micro":   { etiqueta: "Pedir que active el micrófono", pregunta: "quiere que actives tu micrófono" },
-  "pedir-camara":  { etiqueta: "Pedir que active la cámara",    pregunta: "quiere que actives tu cámara" }
+  "pedir-camara":  { etiqueta: "Pedir que active la cámara",    pregunta: "quiere que actives tu cámara" },
+  "pedir-pantalla":{ etiqueta: "Pedir que comparta pantalla",   pregunta: "quiere que compartas tu pantalla" }
 };
+
+// El docente ayuda a SU estudiante con lo básico: pedir (nunca forzar) que
+// encienda cámara, micrófono o pantalla, y reconectar. El resto de acciones
+// sigue siendo de coordinación.
+const ACCIONES_DOCENTE = {
+  "pedir-camara":   "📷 Pedir cámara",
+  "pedir-micro":    "🎙️ Pedir micrófono",
+  "pedir-pantalla": "🖥️ Pedir pantalla",
+  "reconectar":     "↻ Reconectar"
+};
+
+function puedoAyudar() {
+  return appState.role === "docente" || (isObserver() && isAdminEmail(currentUser?.email));
+}
 
 let remotoUnsub = null;
 
@@ -351,7 +378,9 @@ function aplicarAuxilio(orden) {
 
   // Lo que enciende captura se pregunta, nunca se hace solo.
   if (def.pregunta) {
-    mostrarPeticionRemota(orden.action, quien, def.pregunta);
+    const tipo = { "pedir-micro": "micro", "pedir-camara": "camara", "pedir-pantalla": "pantalla" }[orden.action];
+    if (tipo) abrirGuiaMedios(tipo, quien);
+    else mostrarPeticionRemota(orden.action, quien, def.pregunta);
     return;
   }
 
@@ -417,13 +446,365 @@ function mostrarPeticionRemota(action, quien, texto) {
 
 // Enviar una orden (solo coordinación observando).
 function enviarAuxilio(targetId, action) {
-  if (!isAdminEmail(currentUser?.email) || !firebaseReady || !roomPath) return;
+  if (!firebaseReady || !roomPath) return;
+  const esAdmin = isObserver() && isAdminEmail(currentUser?.email);
+  const docentePuede = appState.role === "docente" && action in ACCIONES_DOCENTE;
+  if (!esAdmin && !docentePuede) return;
   set(ref(db, `${roomPath}/remote/${targetId}`), {
     action,
     by: appState.displayName || currentUser?.email || "Coordinación",
     at: Date.now()
   }).then(() => toast("Enviado.")).catch(() => toast("No se pudo enviar."));
 }
+
+/* ===== Ayudar a entrar bien: cámara, micrófono, sonido y pantalla =====
+   El caso real que lo motivó: un estudiante entra por el enlace, el
+   navegador no le da cámara ni micrófono (lo negó sin darse cuenta, o el
+   permiso quedó bloqueado de otra vez) y además le bloquea el sonido porque
+   no tocó nada antes de que empezara la clase. Resultado: no se ve, no se
+   oye, y no sabe por qué. Niños pequeños y personas mayores no van a
+   encontrar el candado de la barra de direcciones por su cuenta.
+
+   Nadie puede encender la cámara de otra persona a distancia: el navegador
+   no lo permite, y está bien que no lo permita. Lo que sí hacemos:
+
+   1. Cada quien publica en su presencia cómo está: cámara, micrófono y
+      sonido. El docente lo ve y sabe QUÉ falla, no solo que "algo falla".
+   2. El docente puede PEDIR cámara, micrófono o pantalla. Al estudiante le
+      aparece una ventana grande con un solo botón. Ese toque es el gesto
+      que el navegador exige para abrir los permisos.
+   3. Si el permiso está bloqueado, la ventana explica paso a paso cómo
+      desbloquearlo EN SU navegador (no hay una sola receta: Chrome, Safari
+      en iPhone y Android lo esconden en sitios distintos).
+   4. Si el sonido está bloqueado, sale un botón enorme "Toca para escuchar
+      la clase". Un toque y listo. */
+
+// Estado de los medios propios: "ok" | "apagado" | "bloqueado" |
+// "sin-dispositivo" | "ocupado" | "error" | "pendiente"
+let estadoMedios = { cam: "pendiente", mic: "pendiente" };
+let sonidoBloqueado = false;
+
+function clasificarErrorMedios(error) {
+  const nombre = error?.name || "";
+  if (nombre === "NotAllowedError" || nombre === "SecurityError" || nombre === "PermissionDeniedError") return "bloqueado";
+  if (nombre === "NotFoundError" || nombre === "DevicesNotFoundError" || nombre === "OverconstrainedError") return "sin-dispositivo";
+  if (nombre === "NotReadableError" || nombre === "TrackStartError" || nombre === "AbortError") return "ocupado";
+  return "error";
+}
+
+// Lo que el docente ve de cada estudiante. Solo estados, nada de contenido.
+function publicarEstadoMedios() {
+  if (!presenceRef || isObserver()) return;
+  update(presenceRef, {
+    medios: {
+      cam: estadoMedios.cam,
+      mic: estadoMedios.mic,
+      sonido: sonidoBloqueado ? "bloqueado" : "ok",
+      pantalla: screenStream ? "compartiendo" : "no"
+    }
+  }).catch(() => {});
+}
+
+// Pide al navegador lo que falte. Debe llamarse desde un toque (gesto del
+// usuario): así el navegador vuelve a mostrar su ventanita de permiso.
+async function pedirMedios({ video = true, audio = true, renegociar = true } = {}) {
+  if (isObserver()) return { ok: false, motivo: "observador" };
+
+  const faltaVideo = video && !localStream?.getVideoTracks().length;
+  const faltaAudio = audio && !localStream?.getAudioTracks().length;
+  if (!faltaVideo && !faltaAudio) return { ok: true };
+
+  const pedir = async (conVideo, conAudio) => navigator.mediaDevices.getUserMedia({
+    video: conVideo ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
+    audio: conAudio ? audioConstraints() : false
+  });
+
+  let nuevo = null;
+  let fallo = null;
+  try {
+    nuevo = await pedir(faltaVideo, faltaAudio);
+  } catch (error) {
+    fallo = error;
+    // Si pidió las dos cosas y no hay cámara, que al menos entre el micrófono
+    // (y al revés): medio estudiante se oye mejor que ninguno.
+    if (faltaVideo && faltaAudio) {
+      try { nuevo = await pedir(false, true); } catch {}
+      if (!nuevo) { try { nuevo = await pedir(true, false); } catch {} }
+    }
+  }
+
+  if (nuevo) {
+    if (!localStream) {
+      localStream = nuevo;
+    } else {
+      nuevo.getTracks().forEach(t => localStream.addTrack(t));
+    }
+    tagAudioAsMusic(localStream);
+    if (!screenStream) dom.localVideo.srcObject = localStream;
+  }
+
+  const motivo = fallo ? clasificarErrorMedios(fallo) : "ok";
+  if (faltaVideo) estadoMedios.cam = localStream?.getVideoTracks().length ? "ok" : motivo;
+  if (faltaAudio) estadoMedios.mic = localStream?.getAudioTracks().length ? "ok" : motivo;
+
+  // Lo que llegó se enciende de verdad y los botones lo reflejan.
+  if (localStream?.getVideoTracks().length && !camOn) dom.toggleCam?.click();
+  if (localStream?.getAudioTracks().length && !micOn) dom.toggleMic?.click();
+
+  publicarEstadoMedios();
+
+  // Conexiones nuevas con mis tracks: la llamada se renegocia completa.
+  if (renegociar && nuevo && peers.size) reconnectAllPeers();
+
+  const ok = (!faltaVideo || estadoMedios.cam === "ok") && (!faltaAudio || estadoMedios.mic === "ok");
+  return { ok, motivo, error: fallo };
+}
+
+/* --- Instrucciones según el navegador --- */
+
+function navegadorActual() {
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.maxTouchPoints > 1 && /Mac/.test(ua));
+  if (ios) return "ios";
+  if (/Android/.test(ua)) return "android";
+  if (/Edg\//.test(ua)) return "edge";
+  if (/Firefox\//.test(ua)) return "firefox";
+  if (/Safari\//.test(ua) && !/Chrome\//.test(ua)) return "safari";
+  return "chrome";
+}
+
+function pasosParaDesbloquear() {
+  switch (navegadorActual()) {
+    case "ios":
+      return [
+        "Arriba, en la barra de la dirección, toca <strong>aA</strong> (o el ícono de la izquierda).",
+        "Toca <strong>Configuración del sitio web</strong>.",
+        "Pon <strong>Cámara</strong> y <strong>Micrófono</strong> en <strong>Permitir</strong>.",
+        "Toca el botón <strong>Recargar la clase</strong> de abajo."
+      ];
+    case "android":
+      return [
+        "Arriba, al lado de la dirección, toca el <strong>candado 🔒</strong> o el ícono <strong>ⓘ</strong>.",
+        "Toca <strong>Permisos</strong>.",
+        "Activa <strong>Cámara</strong> y <strong>Micrófono</strong>.",
+        "Toca el botón <strong>Recargar la clase</strong> de abajo."
+      ];
+    case "safari":
+      return [
+        "En el menú de arriba, toca <strong>Safari → Configuración para este sitio web</strong>.",
+        "Pon <strong>Cámara</strong> y <strong>Micrófono</strong> en <strong>Permitir</strong>.",
+        "Toca el botón <strong>Recargar la clase</strong> de abajo."
+      ];
+    case "firefox":
+      return [
+        "Arriba, a la izquierda de la dirección, toca el ícono de la <strong>cámara tachada</strong> o el candado 🔒.",
+        "Quita el bloqueo de <strong>Cámara</strong> y <strong>Micrófono</strong>.",
+        "Toca el botón <strong>Recargar la clase</strong> de abajo."
+      ];
+    default: // Chrome y Edge
+      return [
+        "Arriba, a la izquierda de la dirección, toca el <strong>candado 🔒</strong> (o el ícono de ajustes).",
+        "Busca <strong>Cámara</strong> y <strong>Micrófono</strong> y elige <strong>Permitir</strong>.",
+        "Toca el botón <strong>Recargar la clase</strong> de abajo."
+      ];
+  }
+}
+
+function textoDeFallo(motivo, que) {
+  if (motivo === "bloqueado") {
+    return `El navegador está bloqueando ${que}. No pasa nada, se arregla en un minuto:`;
+  }
+  if (motivo === "ocupado") {
+    return `Otro programa está usando ${que} (Zoom, Meet, Teams, WhatsApp, la app de Cámara…). Ciérralo y toca «Intentar de nuevo».`;
+  }
+  if (motivo === "sin-dispositivo") {
+    return `No encontramos ${que} en este equipo. Si es un computador de escritorio, revisa que esté conectado. Si no tienes, igual puedes seguir la clase.`;
+  }
+  return `No se pudo encender ${que}. Toca «Intentar de nuevo»; si sigue igual, toca «Recargar la clase».`;
+}
+
+/* --- La ventana grande de ayuda --- */
+
+// tipo: "entrada" | "camara" | "micro" | "pantalla"
+function abrirGuiaMedios(tipo, quien = "") {
+  if (isObserver()) return;
+  document.getElementById("mediaGuide")?.remove();
+
+  const esPantalla = tipo === "pantalla";
+  const quiere = {
+    entrada: { icono: "📷🎙️", titulo: "Enciende tu cámara y tu micrófono", boton: "Encender cámara y micrófono", que: "la cámara y el micrófono", video: true, audio: true },
+    camara: { icono: "📷", titulo: "Enciende tu cámara", boton: "Encender mi cámara", que: "la cámara", video: true, audio: false },
+    micro: { icono: "🎙️", titulo: "Enciende tu micrófono", boton: "Encender mi micrófono", que: "el micrófono", video: false, audio: true },
+    pantalla: { icono: "🖥️", titulo: "Comparte tu pantalla", boton: "Compartir mi pantalla", que: "la pantalla" }
+  }[tipo] || null;
+  if (!quiere) return;
+
+  const intro = quien
+    ? `<strong>${escapeHtml(quien)}</strong> te pide que ${esPantalla ? "compartas tu pantalla" : `enciendas ${quiere.que}`}.`
+    : "Para que tu profe te vea y te escuche en la clase:";
+
+  const ayudaPantalla = esPantalla ? `
+    <ol class="guide-steps">
+      <li>Toca el botón grande de abajo.</li>
+      <li>Se abre una ventanita: elige <strong>Pantalla completa</strong> o la <strong>ventana</strong> que quieres mostrar.</li>
+      <li>Toca <strong>Compartir</strong>. ¡Listo! Para terminar, toca ⏹ Dejar pantalla.</li>
+    </ol>` : "";
+
+  const caja = document.createElement("div");
+  caja.id = "mediaGuide";
+  caja.className = "media-guide";
+  caja.setAttribute("role", "dialog");
+  caja.setAttribute("aria-modal", "true");
+  caja.innerHTML = `
+    <div class="media-guide-card">
+      <div class="guide-icon" aria-hidden="true">${quiere.icono}</div>
+      <h2>${escapeHtml(quiere.titulo)}</h2>
+      <p>${intro}</p>
+      ${ayudaPantalla}
+      <div class="guide-result" data-resultado></div>
+      <div class="guide-actions">
+        <button type="button" class="primary guide-big" data-accion>${escapeHtml(quiere.boton)}</button>
+        <button type="button" class="ghost" data-cerrar>Ahora no</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(caja);
+
+  const resultado = caja.querySelector("[data-resultado]");
+  const boton = caja.querySelector("[data-accion]");
+  caja.querySelector("[data-cerrar]").addEventListener("click", () => caja.remove());
+
+  // Un toque en la ventana también destraba el sonido: aprovechamos el gesto.
+  caja.addEventListener("pointerdown", desbloquearSonido, { once: true });
+
+  boton.addEventListener("click", async () => {
+    boton.disabled = true;
+    boton.textContent = "Un momento…";
+
+    if (esPantalla) {
+      if (!puedeCompartirPantalla()) {
+        resultado.innerHTML = `<p class="guide-warn">Desde un celular o tablet no se puede compartir la pantalla. Para esto se necesita un computador.</p>`;
+        boton.remove();
+        return;
+      }
+      caja.classList.add("hidden"); // que el selector del navegador quede limpio
+      await toggleScreenShare();
+      if (screenStream) { caja.remove(); return; }
+      caja.classList.remove("hidden");
+      resultado.innerHTML = `<p class="guide-warn">No se compartió nada. Si cerraste la ventanita sin querer, inténtalo otra vez.</p>`;
+      boton.disabled = false;
+      boton.textContent = "Intentar de nuevo";
+      return;
+    }
+
+    const r = await pedirMedios({ video: quiere.video, audio: quiere.audio });
+    if (r.ok) {
+      caja.remove();
+      toast("¡Listo! Ya te ven y te escuchan. 🎉");
+      return;
+    }
+
+    const pasos = r.motivo === "bloqueado"
+      ? `<ol class="guide-steps">${pasosParaDesbloquear().map(p => `<li>${p}</li>`).join("")}</ol>`
+      : "";
+    resultado.innerHTML = `
+      <p class="guide-warn">${escapeHtml(textoDeFallo(r.motivo, quiere.que))}</p>
+      ${pasos}
+      <button type="button" class="secondary" data-recargar>↻ Recargar la clase</button>
+    `;
+    resultado.querySelector("[data-recargar]").addEventListener("click", () => location.reload());
+    boton.disabled = false;
+    boton.textContent = "Intentar de nuevo";
+  });
+}
+
+/* --- Sonido bloqueado por el navegador ---
+   Si la clase empieza sin que la persona haya tocado nada (entró por el
+   enlace), el navegador no deja sonar nada hasta el primer toque. */
+
+function avisarSonidoBloqueado() {
+  if (sonidoBloqueado) return;
+  sonidoBloqueado = true;
+  publicarEstadoMedios();
+
+  if (document.getElementById("soundUnlock")) return;
+  const boton = document.createElement("button");
+  boton.id = "soundUnlock";
+  boton.type = "button";
+  boton.className = "sound-unlock";
+  boton.innerHTML = `<span class="sound-unlock-ico">🔊</span><span><strong>Toca aquí para escuchar la clase</strong><small>Tu navegador espera un toque antes de dejar sonar algo.</small></span>`;
+  boton.addEventListener("click", desbloquearSonido);
+  document.body.appendChild(boton);
+}
+
+function desbloquearSonido() {
+  try { ensureAudio().resume?.().catch(() => {}); } catch {}
+  peers.forEach(entry => {
+    if (entry.videoEl) entry.videoEl.play().catch(() => {});
+  });
+  document.getElementById("soundUnlock")?.remove();
+  if (sonidoBloqueado) {
+    sonidoBloqueado = false;
+    publicarEstadoMedios();
+  }
+}
+
+// Revisa si el sonido de la clase está pudiendo salir.
+function revisarSonido() {
+  if (!peers.size) return;
+  if (audioContext && audioContext.state === "suspended" && audioRoute === "webaudio") {
+    avisarSonidoBloqueado();
+  }
+}
+
+// Cualquier toque en la página también destraba el sonido.
+document.addEventListener("pointerdown", () => {
+  if (sonidoBloqueado || audioContext?.state === "suspended") desbloquearSonido();
+}, { passive: true });
+
+function puedeCompartirPantalla() {
+  return !!navigator.mediaDevices?.getDisplayMedia && !isMobileDevice();
+}
+
+/* --- Lo que ve el docente ---
+   Un aviso la primera vez que un estudiante entra sin cámara, sin micrófono
+   o sin sonido, para no tener que adivinarlo por la cara de confusión. */
+
+const avisosDados = new Set();
+
+function avisarProblemasDeMedios() {
+  if (appState.role !== "docente") return;
+  Object.entries(lastParticipants || {}).forEach(([id, p]) => {
+    if (id === CLIENT_ID || p?.role === "observador" || !p?.medios) return;
+    const nombre = p.name || "El estudiante";
+    const m = p.medios;
+    const faltas = [];
+    if (m.cam && !["ok", "pendiente", "apagado"].includes(m.cam)) faltas.push("cámara");
+    if (m.mic && !["ok", "pendiente", "apagado"].includes(m.mic)) faltas.push("micrófono");
+    if (m.sonido === "bloqueado") faltas.push("sonido");
+    const clave = `${id}:${faltas.join(",")}`;
+    if (!faltas.length || avisosDados.has(clave)) return;
+    avisosDados.add(clave);
+    toast(`⚠️ ${nombre} está sin ${faltas.join(", ")}. Ayúdale desde Aula → Ayudar al estudiante.`);
+  });
+}
+
+// Chips de estado para el panel de ayuda.
+function chipsDeMedios(m) {
+  if (!m) return `<span class="media-chip">Revisando…</span>`;
+  const chip = (ok, siOk, siNo, titulo) =>
+    `<span class="media-chip ${ok ? "ok" : "mal"}" title="${escapeHtml(titulo)}">${ok ? siOk : siNo}</span>`;
+  const camOk = m.cam === "ok";
+  const micOk = m.mic === "ok";
+  const sonOk = m.sonido !== "bloqueado";
+  return [
+    chip(camOk, "📷 Cámara", "🚫 Sin cámara", `Cámara: ${m.cam}`),
+    chip(micOk, "🎙️ Micrófono", "🔇 Sin micrófono", `Micrófono: ${m.mic}`),
+    chip(sonOk, "🔊 Escucha", "🔈 No escucha", sonOk ? "Le suena la clase" : "Su navegador bloqueó el sonido: aparece un botón grande para tocar"),
+    m.pantalla === "compartiendo" ? `<span class="media-chip ok">🖥️ Compartiendo</span>` : ""
+  ].join("");
+}
+
 
 /* ===== Blindaje del observador =====
    Ocultar los botones con CSS no es una garantía: siguen en el documento y
@@ -580,6 +961,10 @@ let desdeCuandoSolos = 0;
 
 function hayAlguienConectado() {
   for (const { pc, stream } of peers.values()) {
+    // Conectado es conectado, aunque el otro no esté mandando nada: un
+    // estudiante sin cámara ni micrófono SÍ está en la clase, y reiniciarle
+    // la conexión cada 8 segundos le cortaba justo lo que sí le llegaba.
+    if (pc.connectionState === "connected") return true;
     if (stream && pc.connectionState !== "failed" && pc.connectionState !== "closed") return true;
   }
   return false;
@@ -1089,18 +1474,26 @@ function setupEvents() {
 
   dom.toggleMic.addEventListener("click", () => {
     if (isObserver()) return;
+    // Sin micrófono que encender, el botón no puede "fingir" que lo prende:
+    // abre la ayuda para conseguirlo.
+    if (!localStream?.getAudioTracks().length) { abrirGuiaMedios("micro"); return; }
     micOn = !micOn;
     localStream?.getAudioTracks().forEach(track => track.enabled = micOn);
     dom.toggleMic.classList.toggle("off", !micOn);
     setBtn(dom.toggleMic, micOn ? "🎙️" : "🔇", micOn ? "Micrófono" : "Silenciado");
+    estadoMedios.mic = micOn ? "ok" : "apagado";
+    publicarEstadoMedios();
   });
 
   dom.toggleCam.addEventListener("click", () => {
     if (isObserver()) return;
+    if (!localStream?.getVideoTracks().length) { abrirGuiaMedios("camara"); return; }
     camOn = !camOn;
     localStream?.getVideoTracks().forEach(track => track.enabled = camOn);
     dom.toggleCam.classList.toggle("off", !camOn);
     setBtn(dom.toggleCam, camOn ? "📷" : "🚫", camOn ? "Cámara" : "Sin cámara");
+    estadoMedios.cam = camOn ? "ok" : "apagado";
+    publicarEstadoMedios();
   });
 
   dom.metroVolume.value = String(metroVolume);
@@ -1172,6 +1565,9 @@ function setupEvents() {
   });
 
   dom.shareScreen.addEventListener("click", toggleScreenShare);
+  // En celular y tablet el navegador no permite compartir pantalla: mejor no
+  // mostrar un botón que solo puede fallar.
+  if (!puedeCompartirPantalla()) dom.shareScreen.classList.add("hidden");
   dom.screenPaintBtn?.addEventListener("click", toggleMarcarPantalla);
   dom.shareAudioOnly.addEventListener("click", toggleAudioOnlyShare);
 
@@ -1494,6 +1890,7 @@ async function connectRoom() {
       joinedAt: new Date().toISOString()
     });
     onDisconnect(presenceRef).remove();
+    publicarEstadoMedios();
   } catch (error) {
     console.error("No se pudo escribir en Realtime Database", error);
     setStatus("Error de base de datos", false);
@@ -1509,6 +1906,7 @@ async function connectRoom() {
     participantsCount = Object.keys(lastParticipants).length;
     renderStatusCount();
     renderRemoteHelp();
+    avisarProblemasDeMedios();
     renderEchoWarning();
     syncPeers();
   });
@@ -1805,17 +2203,15 @@ async function ensureLocalMedia() {
   // El observador no pide cámara ni micrófono, venga de donde venga la llamada.
   if (isObserver()) return;
   if (localStream) return;
-  try {
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: audioConstraints()
-    });
-    tagAudioAsMusic(localStream);
-    dom.localVideo.srcObject = localStream;
-  } catch (error) {
-    console.error("Sin acceso a cámara/micrófono", error);
-    toast("No hay acceso a cámara o micrófono. El aula funciona, pero sin enviar video.");
-  }
+  const r = await pedirMedios({ video: true, audio: true, renegociar: false });
+  if (r.ok) return;
+
+  console.error("Sin acceso completo a cámara/micrófono", r.error);
+  // En vez de un aviso que se va en 3 segundos, la ventana que explica
+  // qué pasó y cómo arreglarlo en este navegador.
+  const sinCam = estadoMedios.cam !== "ok";
+  const sinMic = estadoMedios.mic !== "ok";
+  abrirGuiaMedios(sinCam && sinMic ? "entrada" : sinCam ? "camara" : "micro");
 }
 
 function listenSignals() {
@@ -1878,7 +2274,9 @@ function createPeerFor(id, info = {}, { asOfferer = false } = {}) {
   // esos tracks en lugar de la cámara y el micrófono puros.
   const screenTrack = isObserver() ? null : trackDePantallaQueSeEnvia();
   if (screenTrack) {
-    pc.getSenders().find(s => s.track?.kind === "video")?.replaceTrack(screenTrack).catch(() => {});
+    const videoSender = pc.getSenders().find(s => s.track?.kind === "video");
+    if (videoSender) videoSender.replaceTrack(screenTrack).catch(() => {});
+    else pc.addTrack(screenTrack, screenStream); // sin cámara: la pantalla va sola
   }
   const mixedTrack = isObserver() ? null : musicMixer?.dest.stream.getAudioTracks()[0];
   if (mixedTrack) {
@@ -2101,6 +2499,13 @@ async function toggleScreenShare() {
     sender.replaceTrack(screenTrack).catch(error => console.warn("No se pudo enviar la pantalla", error));
     sent++;
   });
+  // Quien no tiene cámara no tiene por dónde mandar video: se renegocia la
+  // llamada para abrir ese canal con la pantalla.
+  if (peers.size && sent < peers.size) {
+    reconnectAllPeers();
+    sent = peers.size;
+  }
+  publicarEstadoMedios();
 
   dom.localVideo.srcObject = screenStream;
   dom.shareScreen.classList.add("on");
@@ -2481,11 +2886,12 @@ function stopScreenShare(silent = false) {
   screenStream = null;
 
   const cameraTrack = localStream?.getVideoTracks()[0];
-  if (cameraTrack) {
-    forEachSender("video", sender => sender.replaceTrack(cameraTrack).catch(console.warn));
-  }
+  // Sin cámara a la cual volver, se deja de mandar video (y no un cuadro
+  // negro congelado de la pantalla que ya se cerró).
+  forEachSender("video", sender => sender.replaceTrack(cameraTrack || null).catch(console.warn));
 
   if (dom.localVideo) dom.localVideo.srcObject = localStream;
+  publicarEstadoMedios();
   dom.shareScreen?.classList.remove("on");
   setBtn(dom.shareScreen, "🖥️", "Pantalla");
   if (!silent) toast("Dejaste de compartir pantalla. Cámara de vuelta.");
@@ -2517,6 +2923,8 @@ function routeEntryAudio(entry) {
       entry.audioNode = ctx.createMediaStreamSource(entry.stream);
       entry.audioNode.connect(ctx.destination);
       entry.videoEl.muted = true; // evita doble salida (Web Audio + elemento)
+      // El contexto queda "suspendido" si nadie ha tocado la página: no suena.
+      setTimeout(revisarSonido, 600);
       return;
     } catch (error) {
       console.warn("No se pudo enrutar por Web Audio; uso el elemento de video", error);
@@ -2524,7 +2932,10 @@ function routeEntryAudio(entry) {
   }
 
   entry.videoEl.muted = false;
-  entry.videoEl.play().catch(() => {});
+  entry.videoEl.play().catch(error => {
+    // NotAllowedError = el navegador bloqueó el sonido hasta el primer toque.
+    if (error?.name === "NotAllowedError") avisarSonidoBloqueado();
+  });
 }
 
 function applyAudioRoute() {
