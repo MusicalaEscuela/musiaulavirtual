@@ -159,6 +159,7 @@ function init() {
 
   setupEvents();
   montarPipMovible();
+  montarOcultarControles();
   renderAll();
   llenarCorreosDocentes();
 
@@ -503,7 +504,8 @@ function publicarEstadoMedios() {
       mic: estadoMedios.mic,
       sonido: sonidoBloqueado ? "bloqueado" : "ok",
       pantalla: screenStream ? "compartiendo" : "no",
-      modo: musicMode ? "instrumento" : "voz"
+      modo: musicMode ? "instrumento" : "voz",
+      red: estadoRed
     }
   }).catch(() => {});
 }
@@ -518,7 +520,7 @@ async function pedirMedios({ video = true, audio = true, renegociar = true } = {
   if (!faltaVideo && !faltaAudio) return { ok: true };
 
   const pedir = async (conVideo, conAudio) => navigator.mediaDevices.getUserMedia({
-    video: conVideo ? { width: { ideal: 1280 }, height: { ideal: 720 } } : false,
+    video: conVideo ? { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } : false,
     audio: conAudio ? audioConstraints() : false
   });
 
@@ -543,6 +545,7 @@ async function pedirMedios({ video = true, audio = true, renegociar = true } = {
       nuevo.getTracks().forEach(t => localStream.addTrack(t));
     }
     tagAudioAsMusic(localStream);
+    localStream.getVideoTracks().forEach(t => { try { t.contentHint = "motion"; } catch {} });
     if (!screenStream) dom.localVideo.srcObject = localStream;
   }
 
@@ -791,6 +794,14 @@ function avisarProblemasDeMedios() {
     }
     if (m.modo !== "instrumento") avisosDados.delete(`${id}:instrumento`);
 
+    if ((m.red === "lenta" || m.red === "equipo") && !avisosDados.has(`${id}:red`)) {
+      avisosDados.add(`${id}:red`);
+      toast(m.red === "lenta"
+        ? `📶 La conexión de ${nombre} está lenta: por eso su video se ve entrecortado. Ya le sugerimos apagar su cámara.`
+        : `💻 El equipo de ${nombre} va al límite: por eso su video se ve lento.`);
+    }
+    if (m.red !== "lenta" && m.red !== "equipo") avisosDados.delete(`${id}:red`);
+
     const clave = `${id}:${faltas.join(",")}`;
     if (!faltas.length || avisosDados.has(clave)) return;
     avisosDados.add(clave);
@@ -813,7 +824,12 @@ function chipsDeMedios(m) {
     m.pantalla === "compartiendo" ? `<span class="media-chip ok">🖥️ Compartiendo</span>` : "",
     m.modo === "instrumento"
       ? `<span class="media-chip aviso" title="Sin cancelación de eco: si no usa audífonos, te devuelve tu propia voz">🎼 Instrumento · sin anti-eco</span>`
-      : ""
+      : "",
+    m.red === "lenta"
+      ? `<span class="media-chip aviso" title="Su internet está lento: el video se le ve y se le envía entrecortado. Ya le apareció un aviso con la opción de apagar la cámara.">📶 Red lenta</span>`
+      : m.red === "equipo"
+        ? `<span class="media-chip aviso" title="Su computador o celular va al límite: le sugerimos cerrar otras pestañas.">💻 Equipo lento</span>`
+        : ""
   ].join("");
 }
 
@@ -1169,6 +1185,181 @@ function nombreDelCorreo(email) {
   return docentesConocidos.find(d => d.email === normalized)?.name || "";
 }
 
+/* ===== Ocultar los botones cuando uno quiera =====
+   Aunque ya no flotan encima del video, ocupan una franja. Hay quien prefiere
+   el video lo más grande posible para ver el arco o los pies completos. */
+const CONTROLES_KEY = "musiaula-controles-ocultos";
+
+function montarOcultarControles() {
+  const btn = dom.toggleControls;
+  if (!btn) return;
+
+  const aplicar = ocultos => {
+    document.body.classList.toggle("controles-ocultos", ocultos);
+    btn.classList.toggle("on", ocultos);
+    btn.textContent = ocultos ? "👁 Mostrar botones" : "🙈 Ocultar botones";
+  };
+
+  let ocultos = false;
+  try { ocultos = localStorage.getItem(CONTROLES_KEY) === "1"; } catch {}
+  aplicar(ocultos);
+
+  btn.addEventListener("click", () => {
+    ocultos = !document.body.classList.contains("controles-ocultos");
+    aplicar(ocultos);
+    try { localStorage.setItem(CONTROLES_KEY, ocultos ? "1" : "0"); } catch {}
+    toast(ocultos
+      ? "Botones ocultos. Para volver a verlos: 👁 Mostrar botones, arriba."
+      : "Botones de vuelta.");
+  });
+}
+
+/* ===== ¿Es la red? Avisar como Meet =====
+   Cuando el video va "lentico", nadie sabe si es el aula, el otro o su propio
+   internet. El navegador sí lo sabe: cada pocos segundos miramos las
+   estadísticas de la llamada y, si el problema es MI conexión (o MI equipo),
+   me lo decimos a mí, con algo concreto que hacer: apagar la cámara deja
+   todo el ancho de banda al audio, que es lo que no se puede perder en una
+   clase de música. Al docente le aparece quién tiene la red lenta.
+
+   Para no asustar por un bache de un segundo: se necesitan dos mediciones
+   malas seguidas para avisar y tres buenas para dar el aviso por superado. */
+
+let vigiaRed = null;
+let estadoRed = "buena";         // "buena" | "lenta" | "equipo"
+let malasSeguidas = 0;
+let buenasSeguidas = 0;
+let redPrevio = { lost: 0, recv: 0 };
+let avisoRedCalladoHasta = 0;
+
+async function medirRed() {
+  if (!peers.size) return null;
+  let rtt = 0;
+  let salidaDisponible = Infinity;
+  let lost = 0;
+  let recv = 0;
+  let limitadoPor = "none";
+
+  for (const { pc } of peers.values()) {
+    if (pc.connectionState !== "connected") continue;
+    let reporte;
+    try { reporte = await pc.getStats(); } catch { continue; }
+    reporte.forEach(r => {
+      if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") {
+        if (r.currentRoundTripTime) rtt = Math.max(rtt, r.currentRoundTripTime * 1000);
+        if (r.availableOutgoingBitrate) salidaDisponible = Math.min(salidaDisponible, r.availableOutgoingBitrate);
+      }
+      if (r.type === "inbound-rtp") {
+        lost += r.packetsLost || 0;
+        recv += r.packetsReceived || 0;
+      }
+      if (r.type === "outbound-rtp" && r.kind === "video" && r.qualityLimitationReason
+          && r.qualityLimitationReason !== "none") {
+        limitadoPor = r.qualityLimitationReason; // "bandwidth" | "cpu"
+      }
+    });
+  }
+
+  const dLost = Math.max(0, lost - redPrevio.lost);
+  const dRecv = Math.max(0, recv - redPrevio.recv);
+  redPrevio = { lost, recv };
+  const perdida = dLost + dRecv > 50 ? dLost / (dLost + dRecv) : 0;
+
+  return { rtt, perdida, salidaDisponible, limitadoPor };
+}
+
+function clasificarRed(m) {
+  if (!m) return "buena";
+  if (m.limitadoPor === "cpu") return "equipo";
+  const mandaVideo = !!localStream?.getVideoTracks().some(t => t.enabled) || !!screenStream;
+  if (m.perdida > 0.06) return "lenta";
+  if (m.rtt > 450) return "lenta";
+  if (mandaVideo && (m.limitadoPor === "bandwidth" || m.salidaDisponible < 250000)) return "lenta";
+  return "buena";
+}
+
+function iniciarVigiaRed() {
+  detenerVigiaRed();
+  estadoRed = "buena";
+  malasSeguidas = 0;
+  buenasSeguidas = 0;
+  redPrevio = { lost: 0, recv: 0 };
+
+  vigiaRed = setInterval(async () => {
+    const lectura = clasificarRed(await medirRed());
+
+    if (lectura === "buena") {
+      malasSeguidas = 0;
+      buenasSeguidas++;
+      if (estadoRed !== "buena" && buenasSeguidas >= 3) cambiarEstadoRed("buena");
+      return;
+    }
+
+    buenasSeguidas = 0;
+    malasSeguidas++;
+    if (malasSeguidas >= 2 && estadoRed !== lectura) cambiarEstadoRed(lectura);
+  }, 4000);
+
+  unsubscribers.push(detenerVigiaRed);
+}
+
+function detenerVigiaRed() {
+  if (vigiaRed) clearInterval(vigiaRed);
+  vigiaRed = null;
+  document.getElementById("netWarning")?.remove();
+}
+
+function cambiarEstadoRed(nuevo) {
+  estadoRed = nuevo;
+  publicarEstadoMedios();
+
+  if (nuevo === "buena") {
+    document.getElementById("netWarning")?.remove();
+    return;
+  }
+  if (Date.now() < avisoRedCalladoHasta) return;
+  mostrarAvisoRed(nuevo);
+}
+
+function mostrarAvisoRed(tipo) {
+  document.getElementById("netWarning")?.remove();
+  const camaraPrendida = !isObserver() && camOn && !!localStream?.getVideoTracks().length && !screenStream;
+
+  const caja = document.createElement("div");
+  caja.id = "netWarning";
+  caja.className = "net-warning";
+  caja.setAttribute("role", "status");
+  caja.innerHTML = tipo === "equipo"
+    ? `<p><strong>💻 Tu equipo va al límite.</strong> El video puede verse lento. Cierra otras pestañas y programas que no estés usando.</p>`
+    : `<p><strong>📶 Tu internet está lento.</strong> El video puede verse entrecortado o congelarse.${camaraPrendida ? " Apagar tu cámara deja toda la conexión para el sonido." : " Acercarte al router o desconectar otros equipos ayuda."}</p>`;
+
+  const acciones = document.createElement("div");
+  acciones.className = "net-actions";
+  if (camaraPrendida) {
+    const apagar = document.createElement("button");
+    apagar.type = "button";
+    apagar.className = "primary tiny";
+    apagar.textContent = "📷 Apagar mi cámara";
+    apagar.addEventListener("click", () => {
+      if (camOn) dom.toggleCam?.click();
+      caja.remove();
+      toast("Cámara apagada: te siguen oyendo. Préndela cuando mejore la conexión.");
+    });
+    acciones.appendChild(apagar);
+  }
+  const ok = document.createElement("button");
+  ok.type = "button";
+  ok.className = "ghost tiny";
+  ok.textContent = "Entendido";
+  ok.addEventListener("click", () => {
+    caja.remove();
+    avisoRedCalladoHasta = Date.now() + 5 * 60 * 1000; // no volver a insistir en 5 min
+  });
+  acciones.appendChild(ok);
+  caja.appendChild(acciones);
+  document.body.appendChild(caja);
+}
+
 /* ===== Mi cámara movible =====
    El recuadro con la cámara propia tapaba una esquina del estudiante. Se
    arrastra a la esquina que estorbe menos y, con doble clic, se achica. La
@@ -1312,7 +1503,7 @@ function bindDom() {
     "biblioCategoria", "biblioNivel", "biblioList", "biblioMore",
     "chatForm", "chatInput",
     "authGate", "googleLogin", "emailForm", "authEmail", "authPassword",
-    "registerBtn", "resetPassword", "logoutBtn", "userBadge", "teacherEmails", "authEmailHint",
+    "registerBtn", "resetPassword", "logoutBtn", "userBadge", "toggleControls", "teacherEmails", "authEmailHint",
     "personalRoomCard", "personalRoomName", "copyPersonalLink", "usePersonalRoom",
     "observerPanel", "observerList",
     "waitRoom", "waitTitle", "waitWhen", "waitHint", "waitCountdown",
@@ -2056,6 +2247,7 @@ async function connectRoom() {
 
   setStatus("En sala", true);
   iniciarVigiaConexion();
+  iniciarVigiaRed();
   quizasMostrarTips();
 }
 
@@ -2392,6 +2584,7 @@ function createPeerFor(id, info = {}, { asOfferer = false } = {}) {
       renderStatusCount();
       tuneAudioLatency(pc);
       boostAudioBitrate(pc);
+      videoFluido(pc);
     }
     if (["disconnected", "failed"].includes(pc.connectionState)) {
       entry.tile?.classList.add("lost");
@@ -3146,6 +3339,23 @@ function tuneAudioLatency(pc) {
 }
 
 // Sube el bitrate del audio que enviamos para que el instrumento llegue con detalle.
+// Si la red aprieta, que el video baje resolución y NO cuadros por segundo:
+// así el movimiento se ve continuo ("lentico" era la cámara a pocos cuadros).
+// La pantalla compartida se deja como está: ahí importa leer el detalle.
+async function videoFluido(pc) {
+  const sender = pc?.getSenders().find(s => s.track?.kind === "video");
+  if (!sender || screenStream) return;
+  try {
+    const params = sender.getParameters();
+    params.degradationPreference = "maintain-framerate";
+    if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+    params.encodings[0].maxFramerate = 30;
+    await sender.setParameters(params);
+  } catch (error) {
+    console.warn("No se pudo ajustar la fluidez del video", error);
+  }
+}
+
 async function boostAudioBitrate(pc) {
   const sender = pc?.getSenders().find(s => s.track?.kind === "audio");
   if (!sender) return;

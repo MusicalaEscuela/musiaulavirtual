@@ -2569,3 +2569,28 @@ body.mode-danza .music-only { display: none !important; }
 #localVideo.pip-br { bottom: 16px; right: 16px; top: auto; left: auto; }
 #localVideo.pip-mini { width: 72px; border-radius: 12px; opacity: 0.85; }
 #localVideo.pip-arrastrando { cursor: grabbing; transition: none; opacity: 0.9; }
+
+/* ===== Botones ocultos a voluntad =====
+   Para ver el video completo (el arco, la mano, los pies) sin nada encima ni
+   debajo. El botón para volver a mostrarlos está en la barra de arriba, que
+   nunca tapa el video. */
+body.controles-ocultos .video-controls,
+body.controles-ocultos .mic-boost { display: none !important; }
+#toggleControls.on { border-color: var(--pink-2); }
+
+/* ===== Aviso de red lenta (como Meet) ===== */
+.net-warning {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1300;
+  width: min(92vw, 520px);
+  padding: 0.85rem 1rem;
+  border-radius: 16px;
+  background: rgba(18, 9, 32, 0.96);
+  border: 1px solid rgba(255, 209, 102, 0.55);
+  box-shadow: var(--shadow);
+}
+.net-warning p { margin: 0 0 0.6rem; line-height: 1.45; }
+.net-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }

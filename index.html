@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Sacramento&display=swap" />
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=32" />
+  <link rel="stylesheet" href="./styles.css?v=33" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -197,6 +197,7 @@
         <span id="audioModeChip" class="status audio-chip">🎤 Modo voz</span>
         <span id="metroChip" class="status metro-chip hidden">♩ Metrónomo</span>
         <span id="connectionStatus" class="status offline">Preparando aula</span>
+        <button id="toggleControls" class="secondary" title="Esconde los botones de micrófono, cámara, etc. para ver el video completo">🙈 Ocultar botones</button>
         <button id="tipsOpen" class="secondary teacher-only" title="Recordatorio de todo lo que puedes hacer">💡 ¿Qué puedo hacer?</button>
         <button id="copyClassLink" class="secondary">Copiar enlace</button>
         <button id="leaveClass" class="danger">Salir</button>
@@ -551,6 +552,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=45"></script>
+  <script type="module" src="./app.js?v=46"></script>
 </body>
 </html>
