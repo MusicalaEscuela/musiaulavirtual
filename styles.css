@@ -2551,3 +2551,5 @@ body.mode-danza .music-only { display: none !important; }
 }
 .media-chip.ok { border-color: rgba(114, 230, 163, 0.5); color: var(--good); }
 .media-chip.mal { border-color: rgba(255, 95, 109, 0.55); color: var(--danger); background: rgba(255, 95, 109, 0.1); }
+
+.media-chip.aviso { border-color: rgba(255, 209, 102, 0.55); color: var(--warn); background: rgba(255, 209, 102, 0.1); }

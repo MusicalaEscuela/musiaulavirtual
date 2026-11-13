@@ -347,6 +347,7 @@ const ACCIONES_REMOTAS = {
 // encienda cámara, micrófono o pantalla, y reconectar. El resto de acciones
 // sigue siendo de coordinación.
 const ACCIONES_DOCENTE = {
+  "modo-voz":       "🎤 Pasar a modo voz",
   "pedir-camara":   "📷 Pedir cámara",
   "pedir-micro":    "🎙️ Pedir micrófono",
   "pedir-pantalla": "🖥️ Pedir pantalla",
@@ -500,7 +501,8 @@ function publicarEstadoMedios() {
       cam: estadoMedios.cam,
       mic: estadoMedios.mic,
       sonido: sonidoBloqueado ? "bloqueado" : "ok",
-      pantalla: screenStream ? "compartiendo" : "no"
+      pantalla: screenStream ? "compartiendo" : "no",
+      modo: musicMode ? "instrumento" : "voz"
     }
   }).catch(() => {});
 }
@@ -752,7 +754,7 @@ function desbloquearSonido() {
 // Revisa si el sonido de la clase está pudiendo salir.
 function revisarSonido() {
   if (!peers.size) return;
-  if (audioContext && audioContext.state === "suspended" && audioRoute === "webaudio") {
+  if (audioContext && audioContext.state === "suspended" && musicMode && audioRoute === "webaudio") {
     avisarSonidoBloqueado();
   }
 }
@@ -782,6 +784,12 @@ function avisarProblemasDeMedios() {
     if (m.cam && !["ok", "pendiente", "apagado"].includes(m.cam)) faltas.push("cámara");
     if (m.mic && !["ok", "pendiente", "apagado"].includes(m.mic)) faltas.push("micrófono");
     if (m.sonido === "bloqueado") faltas.push("sonido");
+    if (m.modo === "instrumento" && !avisosDados.has(`${id}:instrumento`)) {
+      avisosDados.add(`${id}:instrumento`);
+      toast(`🎼 ${nombre} está en modo instrumento (sin cancelación de eco). Si oyes tu voz de vuelta, pásalo a modo voz: Aula → Ayudar al estudiante.`);
+    }
+    if (m.modo !== "instrumento") avisosDados.delete(`${id}:instrumento`);
+
     const clave = `${id}:${faltas.join(",")}`;
     if (!faltas.length || avisosDados.has(clave)) return;
     avisosDados.add(clave);
@@ -801,7 +809,10 @@ function chipsDeMedios(m) {
     chip(camOk, "📷 Cámara", "🚫 Sin cámara", `Cámara: ${m.cam}`),
     chip(micOk, "🎙️ Micrófono", "🔇 Sin micrófono", `Micrófono: ${m.mic}`),
     chip(sonOk, "🔊 Escucha", "🔈 No escucha", sonOk ? "Le suena la clase" : "Su navegador bloqueó el sonido: aparece un botón grande para tocar"),
-    m.pantalla === "compartiendo" ? `<span class="media-chip ok">🖥️ Compartiendo</span>` : ""
+    m.pantalla === "compartiendo" ? `<span class="media-chip ok">🖥️ Compartiendo</span>` : "",
+    m.modo === "instrumento"
+      ? `<span class="media-chip aviso" title="Sin cancelación de eco: si no usa audífonos, te devuelve tu propia voz">🎼 Instrumento · sin anti-eco</span>`
+      : ""
   ].join("");
 }
 
@@ -1720,6 +1731,8 @@ function renderAudioMode() {
   }
   dom.micBoostBar?.classList.toggle("hidden", !musicMode);
   renderEchoWarning();
+  applyAudioRoute();       // la ruta depende del modo: ver routeEntryAudio
+  publicarEstadoMedios();  // el docente ve en qué modo está cada uno
 }
 
 /* El modo instrumento apaga la cancelación de eco: es lo correcto para la
@@ -1838,6 +1851,11 @@ async function enterClass({ room, displayName, role }) {
   appState.room = sala;
   appState.displayName = displayName;
   appState.role = role || "docente";
+  if (appState.role !== "docente" && musicMode) {
+    musicMode = false;
+    try { localStorage.setItem("musiaula-music-mode", "0"); } catch {}
+    renderAudioMode();
+  }
   saveLocal();
 
   // El observador no maneja el escenario: ve lo mismo que el estudiante, pero
@@ -2917,7 +2935,16 @@ function routeEntryAudio(entry) {
   if (!entry.stream || !entry.stream.getAudioTracks().length || !entry.videoEl) return;
   if (entry.audioNode) { try { entry.audioNode.disconnect(); } catch {} entry.audioNode = null; }
 
-  if (audioRoute === "webaudio") {
+  // En modo voz, el audio de los demás sale por el elemento de video aunque
+  // la ruta elegida sea Web Audio. La cancelación de eco de Chrome solo usa
+  // como referencia lo que suena por elementos de audio/video: lo que sale
+  // por Web Audio no lo "conoce", así que no lo resta del micrófono, y al
+  // docente le vuelve su propia voz desde los parlantes del estudiante.
+  // En modo instrumento la cancelación está apagada de todas formas (y se
+  // exige audífonos), así que ahí se conserva Web Audio por su menor latencia.
+  const ruta = (!musicMode && !isMobileDevice()) ? "elemento" : audioRoute;
+
+  if (ruta === "webaudio") {
     try {
       const ctx = ensureAudio();
       entry.audioNode = ctx.createMediaStreamSource(entry.stream);
