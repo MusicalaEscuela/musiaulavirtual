@@ -158,6 +158,7 @@ function init() {
   dom.classMode.value = appState.classMode === "danza" ? "danza" : "musica";
 
   setupEvents();
+  montarPipMovible();
   renderAll();
   llenarCorreosDocentes();
 
@@ -1166,6 +1167,82 @@ async function llenarCorreosDocentes() {
 function nombreDelCorreo(email) {
   const normalized = String(email || "").trim().toLowerCase();
   return docentesConocidos.find(d => d.email === normalized)?.name || "";
+}
+
+/* ===== Mi cámara movible =====
+   El recuadro con la cámara propia tapaba una esquina del estudiante. Se
+   arrastra a la esquina que estorbe menos y, con doble clic, se achica. La
+   elección queda guardada en este equipo. */
+const PIP_KEY = "musiaula-pip-esquina";
+const PIP_MINI_KEY = "musiaula-pip-mini";
+
+function montarPipMovible() {
+  const v = dom.localVideo;
+  const area = dom.videoArea;
+  if (!v || !area) return;
+
+  const esquinas = ["pip-tl", "pip-tr", "pip-bl", "pip-br"];
+  const ponerEsquina = esq => {
+    v.classList.remove(...esquinas);
+    v.classList.add(`pip-${esq}`);
+  };
+
+  let guardada = "br";
+  try { guardada = localStorage.getItem(PIP_KEY) || "br"; } catch {}
+  ponerEsquina(guardada);
+  try { if (localStorage.getItem(PIP_MINI_KEY) === "1") v.classList.add("pip-mini"); } catch {}
+  v.title = "Arrástrame a otra esquina si tapo algo. Doble clic para achicarme o agrandarme.";
+
+  const limpiarPosicion = () => {
+    v.style.left = "";
+    v.style.top = "";
+    v.style.right = "";
+    v.style.bottom = "";
+  };
+
+  let arrastre = null;
+
+  v.addEventListener("pointerdown", e => {
+    const r = v.getBoundingClientRect();
+    arrastre = { dx: e.clientX - r.left, dy: e.clientY - r.top, a: area.getBoundingClientRect(), movio: false };
+    try { v.setPointerCapture(e.pointerId); } catch {}
+  });
+
+  v.addEventListener("pointermove", e => {
+    if (!arrastre) return;
+    const { a } = arrastre;
+    const x = Math.min(Math.max(0, e.clientX - a.left - arrastre.dx), a.width - v.offsetWidth);
+    const y = Math.min(Math.max(0, e.clientY - a.top - arrastre.dy), a.height - v.offsetHeight);
+    arrastre.movio = true;
+    v.classList.add("pip-arrastrando");
+    v.style.left = `${x}px`;
+    v.style.top = `${y}px`;
+    v.style.right = "auto";
+    v.style.bottom = "auto";
+  });
+
+  const soltar = () => {
+    if (!arrastre) return;
+    const { a, movio } = arrastre;
+    arrastre = null;
+    v.classList.remove("pip-arrastrando");
+    if (!movio) return;
+    // Se acomoda en la esquina más cercana a donde se soltó.
+    const r = v.getBoundingClientRect();
+    const cx = r.left + r.width / 2 - a.left;
+    const cy = r.top + r.height / 2 - a.top;
+    const esq = (cy < a.height / 2 ? "t" : "b") + (cx < a.width / 2 ? "l" : "r");
+    limpiarPosicion();
+    ponerEsquina(esq);
+    try { localStorage.setItem(PIP_KEY, esq); } catch {}
+  };
+  v.addEventListener("pointerup", soltar);
+  v.addEventListener("pointercancel", soltar);
+
+  v.addEventListener("dblclick", () => {
+    const mini = v.classList.toggle("pip-mini");
+    try { localStorage.setItem(PIP_MINI_KEY, mini ? "1" : "0"); } catch {}
+  });
 }
 
 function setupAuthEvents() {
@@ -2976,7 +3053,11 @@ function applyAudioRoute() {
 function audioConstraints() {
   return musicMode
     ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000 }
-    : { echoCancellation: true, noiseSuppression: false, autoGainControl: false, channelCount: 2, sampleRate: 48000 };
+    // Modo voz: la supresión de ruido también se come el eco que la
+    // cancelación deja pasar (sobre todo con parlantes altos), y es lo que
+    // permite dar clase sin audífonos. En voz importa hablar claro; para la
+    // fidelidad del instrumento está el modo instrumento.
+    : { echoCancellation: true, noiseSuppression: true, autoGainControl: false, channelCount: 2, sampleRate: 48000 };
 }
 
 // Pista de que el contenido es música: el códec evita el modo "voz" (DTX,

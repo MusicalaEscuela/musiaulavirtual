@@ -467,6 +467,10 @@ textarea:focus {
   position: absolute;
   bottom: 16px;
   right: 16px;
+  z-index: 4;
+  cursor: grab;
+  touch-action: none; /* para poder arrastrarlo con el dedo */
+  transition: width 0.2s ease;
   width: clamp(120px, 22%, 220px);
   aspect-ratio: 4 / 3;
   object-fit: cover;
@@ -489,16 +493,18 @@ textarea:focus {
   background: rgba(10, 5, 18, 0.75);
 }
 
+/* Los controles van en su propia franja DEBAJO del video, en todas las
+   pantallas. Flotando encima tapaban justo la parte baja del cuadro, que es
+   donde se mueve el arco de un violín o un violonchelo, la mano derecha en
+   la guitarra o los pies en danza: lo que el docente más necesita ver. */
 .video-controls {
-  position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
+  position: static;
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
   justify-content: center;
-  max-width: 96%;
+  max-width: 100%;
+  margin: 10px 0 2px;
   z-index: 6;
 }
 
@@ -2553,3 +2559,13 @@ body.mode-danza .music-only { display: none !important; }
 .media-chip.mal { border-color: rgba(255, 95, 109, 0.55); color: var(--danger); background: rgba(255, 95, 109, 0.1); }
 
 .media-chip.aviso { border-color: rgba(255, 209, 102, 0.55); color: var(--warn); background: rgba(255, 209, 102, 0.1); }
+
+/* ===== Mi cámara: se arrastra a cualquier esquina y se puede achicar =====
+   Así no tapa al estudiante: si toca el violín hacia la derecha, se lleva el
+   recuadro a la izquierda, o se deja como un botoncito. */
+#localVideo.pip-tl { top: 16px; left: 16px; bottom: auto; right: auto; }
+#localVideo.pip-tr { top: 16px; right: 16px; bottom: auto; left: auto; }
+#localVideo.pip-bl { bottom: 16px; left: 16px; top: auto; right: auto; }
+#localVideo.pip-br { bottom: 16px; right: 16px; top: auto; left: auto; }
+#localVideo.pip-mini { width: 72px; border-radius: 12px; opacity: 0.85; }
+#localVideo.pip-arrastrando { cursor: grabbing; transition: none; opacity: 0.9; }
