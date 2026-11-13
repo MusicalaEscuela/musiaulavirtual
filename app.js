@@ -1185,33 +1185,84 @@ function nombreDelCorreo(email) {
   return docentesConocidos.find(d => d.email === normalized)?.name || "";
 }
 
-/* ===== Ocultar los botones cuando uno quiera =====
-   Aunque ya no flotan encima del video, ocupan una franja. Hay quien prefiere
-   el video lo más grande posible para ver el arco o los pies completos. */
-const CONTROLES_KEY = "musiaula-controles-ocultos";
+/* ===== Botones: siempre, solos o nunca =====
+   Aunque ya no flotan encima del video, ocupan una franja. Tres maneras,
+   rotando con el mismo botón de la barra de arriba (que nunca tapa nada):
+
+   - "siempre": la franja fija debajo del video. Lo más fácil de entender.
+   - "auto": como YouTube o Meet. Los botones flotan SOBRE el video solo
+     mientras se mueve el mouse (o se toca la pantalla) y se desvanecen a
+     los 3 segundos quietos. Flotan en vez de quedarse en la franja porque
+     si la franja apareciera y desapareciera, el video cambiaría de tamaño
+     cada vez y eso marea.
+   - "ocultos": no están; el video ocupa todo. */
+const CONTROLES_KEY = "musiaula-controles-modo";
+const MODOS_CONTROLES = ["siempre", "auto", "ocultos"];
+const ROTULO_CONTROLES = {
+  siempre: "🎛️ Botones: siempre",
+  auto: "✨ Botones: se esconden solos",
+  ocultos: "🙈 Botones: ocultos"
+};
+const AVISO_CONTROLES = {
+  siempre: "Botones siempre visibles, debajo del video.",
+  auto: "Los botones se esconden solos: mueve el mouse o toca el video para que aparezcan.",
+  ocultos: "Botones ocultos. Para volver a verlos, toca este mismo botón arriba."
+};
+let modoControles = "siempre";
+let dormirTimer = null;
+
+function despertarControles() {
+  if (modoControles !== "auto") return;
+  document.body.classList.remove("controles-dormidos");
+  clearTimeout(dormirTimer);
+  dormirTimer = setTimeout(() => {
+    // No se esconden mientras el mouse está encima de ellos ni mientras uno
+    // de ellos tiene el foco del teclado: sería quitarle el botón de la mano.
+    const barra = document.querySelector(".video-controls");
+    if (barra && (barra.matches(":hover") || barra.contains(document.activeElement))) {
+      despertarControles();
+      return;
+    }
+    document.body.classList.add("controles-dormidos");
+  }, 3000);
+}
 
 function montarOcultarControles() {
   const btn = dom.toggleControls;
   if (!btn) return;
 
-  const aplicar = ocultos => {
-    document.body.classList.toggle("controles-ocultos", ocultos);
-    btn.classList.toggle("on", ocultos);
-    btn.textContent = ocultos ? "👁 Mostrar botones" : "🙈 Ocultar botones";
+  const aplicar = modo => {
+    modoControles = MODOS_CONTROLES.includes(modo) ? modo : "siempre";
+    document.body.classList.toggle("controles-ocultos", modoControles === "ocultos");
+    document.body.classList.toggle("controles-auto", modoControles === "auto");
+    document.body.classList.remove("controles-dormidos");
+    clearTimeout(dormirTimer);
+    btn.classList.toggle("on", modoControles !== "siempre");
+    btn.textContent = ROTULO_CONTROLES[modoControles];
+    if (modoControles === "auto") despertarControles();
   };
 
-  let ocultos = false;
-  try { ocultos = localStorage.getItem(CONTROLES_KEY) === "1"; } catch {}
-  aplicar(ocultos);
+  let guardado = "siempre";
+  try {
+    guardado = localStorage.getItem(CONTROLES_KEY)
+      // Quien ya había elegido "ocultar" con la versión anterior lo conserva.
+      || (localStorage.getItem("musiaula-controles-ocultos") === "1" ? "ocultos" : "siempre");
+  } catch {}
+  aplicar(guardado);
 
   btn.addEventListener("click", () => {
-    ocultos = !document.body.classList.contains("controles-ocultos");
-    aplicar(ocultos);
-    try { localStorage.setItem(CONTROLES_KEY, ocultos ? "1" : "0"); } catch {}
-    toast(ocultos
-      ? "Botones ocultos. Para volver a verlos: 👁 Mostrar botones, arriba."
-      : "Botones de vuelta.");
+    const siguiente = MODOS_CONTROLES[(MODOS_CONTROLES.indexOf(modoControles) + 1) % MODOS_CONTROLES.length];
+    aplicar(siguiente);
+    try { localStorage.setItem(CONTROLES_KEY, siguiente); } catch {}
+    toast(AVISO_CONTROLES[siguiente]);
   });
+
+  // Cualquier señal de vida sobre el video los trae de vuelta.
+  const panel = document.querySelector(".video-panel");
+  ["pointermove", "pointerdown", "touchstart"].forEach(evento => {
+    panel?.addEventListener(evento, despertarControles, { passive: true });
+  });
+  document.addEventListener("keydown", despertarControles);
 }
 
 /* ===== ¿Es la red? Avisar como Meet =====

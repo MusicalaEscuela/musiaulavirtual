@@ -2594,3 +2594,28 @@ body.controles-ocultos .mic-boost { display: none !important; }
 }
 .net-warning p { margin: 0 0 0.6rem; line-height: 1.45; }
 .net-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+
+/* Modo "se esconden solos": flotan sobre el video (en cualquier pantalla) y
+   se desvanecen cuando nadie los usa. */
+/* De borde a borde (2%) y no "left: 50%": centrado con left 50% solo le
+   quedaba la mitad del ancho y los botones se partían en dos filas. La caja
+   no recibe clics, solo los botones: así no bloquea arrastrar mi cámara. */
+body.controles-auto:not(.focus-mode) .video-panel > .video-controls {
+  position: absolute !important;
+  bottom: 14px;
+  left: 2%;
+  right: 2%;
+  transform: none;
+  margin: 0;
+  max-width: none;
+  z-index: 8;
+  pointer-events: none;
+}
+body.controles-auto .video-controls { transition: opacity 0.35s ease; }
+body.controles-auto .video-controls > * { pointer-events: auto; }
+/* Se desvanece la barra entera (con transición); los botones solo dejan de
+   recibir clics, para no cortar el desvanecido en seco. */
+body.controles-auto.controles-dormidos .video-controls { opacity: 0; pointer-events: none; }
+body.controles-auto.controles-dormidos .video-controls > * { pointer-events: none; }
+/* Mientras duermen, el cursor tampoco estorba sobre el video. */
+body.controles-auto.controles-dormidos .video-panel { cursor: none; }
