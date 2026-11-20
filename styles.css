@@ -15,14 +15,42 @@
   --haydn: #E6E8E8;
   --debussy: #F9F9F9;
 
-  /* Papeles de cada color dentro de la aplicación */
-  --bg: var(--wagner);
-  --bg-soft: var(--chopin);
-  --card: rgba(255, 255, 255, 0.07);
-  --card-strong: rgba(255, 255, 255, 0.12);
-  --text: var(--debussy);
-  --muted: rgba(249, 249, 249, 0.70);
-  --line: rgba(255, 255, 255, 0.14);
+  /* ===== Tema claro (predeterminado) =====
+     Pastel que sale de la misma paleta: el fondo es un lavanda muy suave
+     (Beethoven casi blanco), el texto es un Bach suavizado en vez de negro,
+     y los resplandores del fondo son los tres primarios del logo apenas
+     insinuados. El tema oscuro de siempre queda en [data-theme="dark"]. */
+  --bg: #F6F3FC;
+  --bg-soft: #EFEAF9;
+  --card: rgba(255, 255, 255, 0.70);
+  --card-strong: rgba(255, 255, 255, 0.92);
+  --text: #231B45;
+  --muted: rgba(35, 27, 69, 0.66);
+  --line: rgba(34, 10, 99, 0.12);
+  --line-strong: rgba(34, 10, 99, 0.24);
+  --tint-1: rgba(104, 13, 191, 0.04);
+  --tint-2: rgba(104, 13, 191, 0.07);
+  --tint-3: rgba(104, 13, 191, 0.11);
+  --well: rgba(34, 10, 99, 0.045);
+  --overlay: rgba(255, 255, 255, 0.97);
+  --backdrop: rgba(35, 27, 69, 0.38);
+  --vc-bg: rgba(255, 255, 255, 0.92);
+  --video-bg: #221B3A;
+  --viewer-bg: #E9E3F5;
+  --guide-card: linear-gradient(160deg, #FFFFFF, #F3EEFC);
+  --warning-bg: rgba(255, 209, 102, 0.20);
+  --warning-line: rgba(183, 121, 31, 0.35);
+  --warning-text: #6B4A10;
+  --good-text: #17834B;
+  --warn-text: #9A6700;
+  --danger-text: #C52B3D;
+  --accent-text: #CE0071;
+  --countdown-text: var(--beethoven);
+  --glow-1: 0.10;
+  --glow-2: 0.11;
+  --glow-3: 0.08;
+  --glow-4: 0.07;
+  --shadow-alpha: 0.18;
 
   --blue: var(--mozart);
   --purple: var(--beethoven);
@@ -30,18 +58,80 @@
   --pink: var(--brahms);
   /* Tinte aclarado del magenta: el manual está pensado para impresión y
      sobre fondo oscuro el Brahms puro pierde legibilidad en texto fino. */
-  --pink-2: #FF4FA8;
-  --cream: var(--haydn);
+  --pink-2: #CE0071;
+  /* "cream" es el texto secundario con acento (autor del chat, enlaces,
+     nota del afinador). Sobre claro va en violeta. */
+  --cream: #5B2BB8;
 
   --danger: #ff5f6d;
   --good: #72e6a3;
   --warn: #ffd166;
-  --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  --shadow: 0 18px 50px rgba(60, 30, 120, 0.14);
   --radius: 24px;
 
   /* Roboto es la familia principal; Calibri es la secundaria que indica el
      manual para formatos digitales cuando Roboto no está disponible. */
   font-family: Roboto, Calibri, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+/* ===== Tema oscuro (a elección) =====
+   Los valores de siempre. Se activa con el botón 🌙 y queda guardado. */
+:root[data-theme="dark"] {
+  --bg: var(--wagner);
+  --bg-soft: var(--chopin);
+  --card: rgba(255, 255, 255, 0.07);
+  --card-strong: rgba(255, 255, 255, 0.12);
+  --text: var(--debussy);
+  --muted: rgba(249, 249, 249, 0.70);
+  --line: rgba(255, 255, 255, 0.14);
+  --line-strong: rgba(255, 255, 255, 0.28);
+  --tint-1: rgba(255, 255, 255, 0.05);
+  --tint-2: rgba(255, 255, 255, 0.09);
+  --tint-3: rgba(255, 255, 255, 0.14);
+  --well: rgba(0, 0, 0, 0.22);
+  --overlay: rgba(18, 9, 32, 0.96);
+  --backdrop: rgba(6, 4, 18, 0.78);
+  --vc-bg: rgba(0, 0, 0, 0.62);
+  --video-bg: rgba(0, 0, 0, 0.4);
+  --viewer-bg: #15162B;
+  --guide-card: linear-gradient(160deg, var(--bach), var(--wagner));
+  --warning-bg: rgba(255, 243, 215, 0.1);
+  --warning-line: rgba(255, 243, 215, 0.2);
+  --warning-text: rgba(255, 248, 255, 0.82);
+  --good-text: var(--good);
+  --warn-text: var(--warn);
+  --danger-text: var(--danger);
+  --accent-text: #FF4FA8;
+  --countdown-text: #fff;
+  --pink-2: #FF4FA8;
+  --cream: var(--haydn);
+  --glow-1: 0.34;
+  --glow-2: 0.30;
+  --glow-3: 0.24;
+  --glow-4: 0.18;
+  --shadow-alpha: 0.5;
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+:root { color-scheme: light; }
+
+/* Lo que va SOBRE el video sigue oscuro en ambos temas (un video se ve mejor
+   con marco oscuro), así que ahí adentro los colores se vuelven los del tema
+   oscuro: así cualquier botón o texto que tenga adentro se lee. */
+.remote-placeholder,
+.stats-panel,
+.screen-paint,
+.music-gate,
+.video-tile .tile-name {
+  --text: var(--debussy);
+  --muted: rgba(249, 249, 249, 0.72);
+  --line: rgba(255, 255, 255, 0.16);
+  --line-strong: rgba(255, 255, 255, 0.3);
+  --tint-1: rgba(255, 255, 255, 0.05);
+  --tint-2: rgba(255, 255, 255, 0.09);
+  --tint-3: rgba(255, 255, 255, 0.14);
+  --well: rgba(0, 0, 0, 0.25);
+  color: var(--text);
 }
 
 
@@ -56,10 +146,10 @@ body {
   /* Los tres primarios del logo, en el mismo orden en que aparecen en él:
      azul arriba a la izquierda, violeta en el centro, magenta abajo. */
   background:
-    radial-gradient(circle at 12% 0%, rgba(12, 65, 196, 0.34), transparent 30rem),
-    radial-gradient(circle at 88% 6%, rgba(104, 13, 191, 0.30), transparent 32rem),
-    radial-gradient(circle at 78% 100%, rgba(206, 0, 113, 0.24), transparent 28rem),
-    radial-gradient(circle at 0% 90%, rgba(87, 41, 255, 0.18), transparent 26rem),
+    radial-gradient(circle at 12% 0%, rgba(12, 65, 196, var(--glow-1)), transparent 30rem),
+    radial-gradient(circle at 88% 6%, rgba(104, 13, 191, var(--glow-2)), transparent 32rem),
+    radial-gradient(circle at 78% 100%, rgba(206, 0, 113, var(--glow-3)), transparent 28rem),
+    radial-gradient(circle at 0% 90%, rgba(87, 41, 255, var(--glow-4)), transparent 26rem),
     var(--bg);
   color: var(--text);
 }
@@ -104,11 +194,14 @@ button:active,
 
 .primary {
   background: linear-gradient(135deg, var(--blue), var(--purple) 50%, var(--pink));
+  /* Explícito: antes lo heredaba del texto general, que era blanco solo
+     porque el tema era oscuro. Sobre el degradado va blanco en ambos. */
+  color: #fff;
   box-shadow: 0 12px 30px rgba(108, 62, 240, 0.32);
 }
 
 .secondary {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--tint-3);
   border: 1px solid var(--line);
 }
 
@@ -126,7 +219,7 @@ button:active,
   padding: 0.5rem 0.75rem;
   min-height: 34px;
   font-size: 0.85rem;
-  background: rgba(255, 255, 255, 0.11);
+  background: var(--tint-2);
   border: 1px solid var(--line);
 }
 
@@ -321,7 +414,7 @@ select,
 textarea {
   width: 100%;
   border: 1px solid var(--line);
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--well);
   color: var(--text);
   border-radius: 16px;
   padding: 0.85rem 0.95rem;
@@ -371,11 +464,11 @@ textarea:focus {
 }
 
 .warning {
-  background: rgba(255, 243, 215, 0.1);
-  border: 1px solid rgba(255, 243, 215, 0.2);
+  background: var(--warning-bg);
+  border: 1px solid var(--warning-line);
   border-radius: 18px;
   padding: 1rem;
-  color: rgba(255, 248, 255, 0.82);
+  color: var(--warning-text);
   line-height: 1.45;
 }
 
@@ -417,7 +510,7 @@ textarea:focus {
 
 .status.offline {
   color: var(--cream);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--tint-2);
 }
 
 .class-shell {
@@ -450,7 +543,7 @@ textarea:focus {
   flex: 1 1 auto;
   min-height: 280px;
   position: relative;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--video-bg);
 }
 
 #remoteVideo {
@@ -532,7 +625,8 @@ textarea:focus {
   padding: 6px 10px 5px;
   border-radius: 14px;
   font-size: 1.15rem;
-  background: rgba(0, 0, 0, 0.62);
+  background: var(--vc-bg);
+  color: var(--text);
   border: 1px solid var(--line);
   backdrop-filter: blur(8px);
   display: flex;
@@ -560,7 +654,8 @@ textarea:focus {
 }
 
 .vc-btn.off {
-  background: rgba(255, 95, 109, 0.65);
+  background: rgba(255, 95, 109, 0.85);
+  color: #fff;
 }
 
 .vc-btn.on {
@@ -637,9 +732,9 @@ textarea:focus {
   margin: 0.4rem 0 0;
 }
 
-.pulse-feedback.good { color: var(--good); }
-.pulse-feedback.early { color: var(--warn); }
-.pulse-feedback.late { color: var(--pink-2); }
+.pulse-feedback.good { color: var(--good-text); }
+.pulse-feedback.early { color: var(--warn-text); }
+.pulse-feedback.late { color: var(--accent-text); }
 
 .pulse-taps {
   display: flex;
@@ -653,7 +748,7 @@ textarea:focus {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--tint-3);
 }
 
 .pulse-dot.good { background: var(--good); }
@@ -675,7 +770,7 @@ textarea:focus {
   border-bottom: 1px solid var(--line);
   background:
     radial-gradient(circle at top right, rgba(255, 111, 216, 0.18), transparent 18rem),
-    rgba(0, 0, 0, 0.25);
+    var(--well);
   text-align: center;
   animation: stage-in 0.35s ease;
 }
@@ -746,7 +841,7 @@ textarea:focus {
   font-size: 1.15rem;
   font-weight: 900;
   padding: 0.85rem 1.1rem;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--tint-3);
   border: 1px solid var(--line);
 }
 
@@ -842,7 +937,7 @@ textarea:focus {
 }
 
 .tab.active {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--tint-3);
   border-color: var(--line);
 }
 
@@ -866,7 +961,7 @@ textarea:focus {
 
 .live-card,
 .mini-form {
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--well);
   border: 1px solid var(--line);
   border-radius: 20px;
   padding: 1rem;
@@ -895,7 +990,7 @@ textarea:focus {
 }
 
 .quick-responses button {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--tint-2);
   border: 1px solid var(--line);
   justify-content: flex-start;
 }
@@ -906,7 +1001,7 @@ textarea:focus {
 }
 
 .resource-card {
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--well);
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 0.9rem;
@@ -962,7 +1057,7 @@ textarea:focus {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--tint-3);
   color: var(--muted);
   transition: transform 0.08s ease, background 0.08s ease;
 }
@@ -1159,9 +1254,9 @@ hr {
 .fretboard.bass { background: linear-gradient(#4a2f3f, #2a1626); }
 .fret-head, .fret-row { display: grid; grid-template-columns: 48px repeat(5, 1fr); gap: 6px; align-items: center; }
 .fret-head { margin-bottom: 6px; }
-.fret-num { text-align: center; font-size: 0.75rem; color: var(--cream); opacity: 0.8; }
+.fret-num { text-align: center; font-size: 0.75rem; color: #E6E8E8; opacity: 0.8; }
 .fret-row { margin: 4px 0; }
-.string-name { font-weight: 700; color: var(--cream); text-align: center; }
+.string-name { font-weight: 700; color: #E6E8E8; text-align: center; }
 .fret-cell {
   height: 38px;
   border-radius: 6px;
@@ -1234,7 +1329,7 @@ hr {
   aspect-ratio: 3 / 4;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: linear-gradient(var(--purple), var(--bg-soft));
+  background: linear-gradient(var(--purple), var(--bach));
   color: #fff;
   font-weight: 800;
   font-size: 1.2rem;
@@ -1248,11 +1343,11 @@ hr {
   font-size: clamp(4rem, 18vw, 9rem);
   font-weight: 900;
   text-align: center;
-  color: #fff;
+  color: var(--countdown-text);
   text-shadow: 0 6px 30px rgba(108, 62, 240, 0.7);
 }
 .countdown.pop { animation: countPop 0.4s ease; }
-.countdown.go { color: var(--good); }
+.countdown.go { color: var(--good-text); }
 @keyframes countPop {
   0% { transform: scale(0.4); opacity: 0.2; }
   60% { transform: scale(1.15); opacity: 1; }
@@ -1392,7 +1487,7 @@ hr {
 }
 .chat-msg.theirs {
   justify-self: start;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--well);
   border-bottom-left-radius: 4px;
 }
 .chat-author {
@@ -1445,7 +1540,7 @@ hr {
   overflow-y: auto;
   transform: translateX(100%);
   transition: transform 0.22s ease;
-  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5);
+  box-shadow: -12px 0 40px rgba(34, 10, 99, var(--shadow-alpha));
 }
 .focus-mode.tools-open .tool-panel { transform: translateX(0); }
 
@@ -1458,7 +1553,7 @@ hr {
   padding: 8px 14px;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: rgba(12, 6, 22, 0.86);
+  background: var(--overlay);
   backdrop-filter: blur(8px);
   color: var(--text);
   font-weight: 600;
@@ -1508,7 +1603,7 @@ hr {
   z-index: 40;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(12, 6, 22, 0.82);
+  background: var(--overlay);
   backdrop-filter: blur(8px);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
@@ -1628,7 +1723,7 @@ body.mode-danza .music-only { display: none !important; }
   color: var(--cream);
   transition: color 0.15s ease;
 }
-.tuner-note.in-tune { color: #4ade80; }
+.tuner-note.in-tune { color: var(--good-text); }
 .tuner-meter { margin: 0.4rem 0 0.6rem; }
 .tuner-scale {
   display: flex;
@@ -1642,7 +1737,7 @@ body.mode-danza .music-only { display: none !important; }
   position: relative;
   height: 26px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--tint-2);
   border: 1px solid var(--line);
   overflow: hidden;
 }
@@ -1670,7 +1765,7 @@ body.mode-danza .music-only { display: none !important; }
 
 /* ===== Estado del audio y volumen del instrumento ===== */
 .audio-chip {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--tint-2);
   border: 1px solid var(--line);
 }
 .audio-chip.music {
@@ -1692,7 +1787,7 @@ body.mode-danza .music-only { display: none !important; }
   margin: 4px auto 10px;
   padding: 8px 14px;
   border-radius: 999px;
-  background: rgba(12, 6, 22, 0.82);
+  background: var(--overlay);
   backdrop-filter: blur(8px);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
@@ -1736,7 +1831,7 @@ body.mode-danza .music-only { display: none !important; }
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--tint-3);
   border: 1px solid var(--line);
   transition: transform 0.06s ease, background 0.06s ease;
 }
@@ -1762,7 +1857,7 @@ body.mode-danza .music-only { display: none !important; }
   padding: 0.6rem 0.7rem;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--tint-1);
 }
 .timing-head {
   display: flex;
@@ -1773,15 +1868,15 @@ body.mode-danza .music-only { display: none !important; }
   font-size: 0.85rem;
 }
 .timing-verdict { font-weight: 700; }
-.timing-verdict.good { color: var(--good); }
-.timing-verdict.early { color: var(--warn); }
-.timing-verdict.late { color: var(--pink-2); }
+.timing-verdict.good { color: var(--good-text); }
+.timing-verdict.early { color: var(--warn-text); }
+.timing-verdict.late { color: var(--accent-text); }
 
 .timing-track {
   position: relative;
   height: 20px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--tint-2);
   border: 1px solid var(--line);
   overflow: hidden;
 }
@@ -1893,7 +1988,7 @@ body.mode-danza .music-only { display: none !important; }
   min-width: 26px;
   padding: 2px 9px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--tint-3);
   border: 1px solid var(--line);
   font-size: 0.8rem;
   font-weight: 700;
@@ -1906,12 +2001,12 @@ body.mode-danza .music-only { display: none !important; }
   padding: 0.9rem 1rem;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--tint-1);
   transition: border-color 0.16s ease, background 0.16s ease;
 }
 .agenda-item:hover {
-  border-color: rgba(255, 255, 255, 0.28);
-  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--line-strong);
+  background: var(--tint-2);
 }
 /* Una clase única ya pasada: se ve, pero apagada. */
 .agenda-item.inactiva { opacity: 0.55; }
@@ -1931,7 +2026,7 @@ body.mode-danza .music-only { display: none !important; }
   border-radius: 999px;
   font-size: 0.72rem;
   font-weight: 700;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--tint-2);
   border: 1px solid var(--line);
   white-space: nowrap;
 }
@@ -1958,7 +2053,7 @@ body.mode-danza .music-only { display: none !important; }
 }
 .agenda-meta dd { margin: 0; font-size: 0.84rem; }
 .agenda-meta code {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--well);
   padding: 1px 7px;
   border-radius: 6px;
   font-size: 0.8rem;
@@ -1980,7 +2075,7 @@ body.mode-danza .music-only { display: none !important; }
   margin-left: 8px;
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--tint-2);
   font-size: 0.72rem;
 }
 
@@ -1995,7 +2090,7 @@ body.mode-danza .music-only { display: none !important; }
    controlar. El aviso existe a propósito: nadie debe ser mirado sin saberlo,
    pero se ve discreto, no como una alarma de vigilancia. */
 .observer-chip {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--tint-2);
   border: 1px solid var(--line);
   cursor: help;
 }
@@ -2015,14 +2110,14 @@ body.mode-danza .music-only { display: none !important; }
 .role-observador .quick-responses { display: none; }
 
 /* Una marca sobria para que quien observa recuerde en qué modo está. */
-.role-observador .video-panel { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.14); }
+.role-observador .video-panel { box-shadow: inset 0 0 0 2px var(--line-strong); }
 
 /* ===== Elegir clase para observar ===== */
 .observer-panel {
   padding: 0.9rem 1rem;
   border-radius: 14px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--tint-1);
   margin-bottom: 1rem;
 }
 .observer-panel .hint { margin: 0.2rem 0 0.7rem; }
@@ -2037,16 +2132,16 @@ body.mode-danza .music-only { display: none !important; }
   text-align: left;
   padding: 0.6rem 0.8rem;
   border-radius: 12px;
-  background: rgba(0, 0, 0, 0.24);
+  background: var(--well);
   border: 1px solid var(--line);
   min-height: 0;
 }
-.observer-item:hover { border-color: rgba(255, 255, 255, 0.3); }
+.observer-item:hover { border-color: var(--line-strong); }
 .observer-item.en-curso { border-color: var(--pink-2); }
 .observer-item-main { display: grid; gap: 1px; min-width: 0; }
 .observer-item-main .hint { margin: 0; font-size: 0.72rem; }
 .observer-item-when { font-size: 0.74rem; color: var(--muted); white-space: nowrap; }
-.observer-live { color: var(--pink-2); font-weight: 700; }
+.observer-live { color: var(--accent-text); font-weight: 700; }
 
 /* ===== Aviso de eco ===== */
 .echo-warning {
@@ -2065,14 +2160,14 @@ body.mode-danza .music-only { display: none !important; }
   padding: 0.8rem 0.9rem;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--tint-1);
   margin-bottom: 0.9rem;
 }
 .remote-targets { display: grid; gap: 10px; margin-top: 0.5rem; }
 .remote-target {
   padding: 0.6rem 0.7rem;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--well);
   border: 1px solid var(--line);
 }
 .remote-target .actions { margin-top: 0.5rem; gap: 6px; }
@@ -2088,7 +2183,7 @@ body.mode-danza .music-only { display: none !important; }
   max-width: min(92vw, 460px);
   padding: 1rem 1.1rem;
   border-radius: 16px;
-  background: rgba(18, 9, 32, 0.97);
+  background: var(--overlay);
   border: 1px solid var(--pink-2);
   box-shadow: var(--shadow);
   text-align: center;
@@ -2128,7 +2223,7 @@ body.mode-danza .music-only { display: none !important; }
   min-height: 34px;
   padding: 0;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--tint-2);
   border: 2px solid transparent;
 }
 .ink-btn span {
@@ -2138,9 +2233,9 @@ body.mode-danza .music-only { display: none !important; }
   margin: 0 auto;
   border-radius: 50%;
   background: var(--tinta);
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  border: 1px solid var(--line-strong);
 }
-.ink-btn.on { border-color: #fff; transform: scale(1.08); }
+.ink-btn.on { border-color: var(--text); transform: scale(1.08); }
 
 /* ===== Dos materiales lado a lado ===== */
 .stage-split { display: grid; gap: 14px; }
@@ -2279,7 +2374,7 @@ body.mode-danza .music-only { display: none !important; }
   display: grid;
   place-items: center;
   padding: 16px;
-  background: rgba(12, 10, 30, 0.82);
+  background: var(--backdrop);
   backdrop-filter: blur(6px);
   overflow-y: auto;
 }
@@ -2312,9 +2407,9 @@ body.mode-danza .music-only { display: none !important; }
   padding: 0.75rem 0.85rem;
   border-radius: 12px;
   border: 1px solid var(--line);
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--tint-1);
 }
-.tip:hover { border-color: rgba(255, 255, 255, 0.26); }
+.tip:hover { border-color: var(--line-strong); }
 .tip-icono { font-size: 1.5rem; line-height: 1.2; }
 .tip h3 { margin: 0 0 0.2rem; font-size: 0.96rem; }
 .tip-como { margin: 0; font-size: 0.83rem; }
@@ -2347,7 +2442,7 @@ body.mode-danza .music-only { display: none !important; }
   height: 58vh;
   display: grid;
   place-items: center;
-  background: #15162b;
+  background: var(--viewer-bg);
   padding: 8px;
 }
 .stage-pdf canvas {
@@ -2458,7 +2553,7 @@ body.mode-danza .music-only { display: none !important; }
   display: grid;
   place-items: center;
   padding: 16px;
-  background: rgba(6, 4, 18, 0.78);
+  background: var(--backdrop);
   backdrop-filter: blur(4px);
 }
 .media-guide.hidden { display: none; }
@@ -2468,7 +2563,7 @@ body.mode-danza .music-only { display: none !important; }
   overflow-y: auto;
   padding: 1.6rem 1.4rem;
   border-radius: var(--radius);
-  background: linear-gradient(160deg, var(--bach), var(--wagner));
+  background: var(--guide-card);
   border: 1px solid var(--pink-2);
   box-shadow: var(--shadow);
   text-align: center;
@@ -2555,10 +2650,10 @@ body.mode-danza .music-only { display: none !important; }
   border: 1px solid var(--line);
   background: var(--card);
 }
-.media-chip.ok { border-color: rgba(114, 230, 163, 0.5); color: var(--good); }
-.media-chip.mal { border-color: rgba(255, 95, 109, 0.55); color: var(--danger); background: rgba(255, 95, 109, 0.1); }
+.media-chip.ok { border-color: rgba(114, 230, 163, 0.5); color: var(--good-text); }
+.media-chip.mal { border-color: rgba(255, 95, 109, 0.55); color: var(--danger-text); background: rgba(255, 95, 109, 0.1); }
 
-.media-chip.aviso { border-color: rgba(255, 209, 102, 0.55); color: var(--warn); background: rgba(255, 209, 102, 0.1); }
+.media-chip.aviso { border-color: rgba(255, 209, 102, 0.55); color: var(--warn-text); background: rgba(255, 209, 102, 0.1); }
 
 /* ===== Mi cámara: se arrastra a cualquier esquina y se puede achicar =====
    Así no tapa al estudiante: si toca el violín hacia la derecha, se lleva el
@@ -2588,7 +2683,7 @@ body.controles-ocultos .mic-boost { display: none !important; }
   width: min(92vw, 520px);
   padding: 0.85rem 1rem;
   border-radius: 16px;
-  background: rgba(18, 9, 32, 0.96);
+  background: var(--overlay);
   border: 1px solid rgba(255, 209, 102, 0.55);
   box-shadow: var(--shadow);
 }
@@ -2619,3 +2714,12 @@ body.controles-auto.controles-dormidos .video-controls { opacity: 0; pointer-eve
 body.controles-auto.controles-dormidos .video-controls > * { pointer-events: none; }
 /* Mientras duermen, el cursor tampoco estorba sobre el video. */
 body.controles-auto.controles-dormidos .video-panel { cursor: none; }
+
+/* ===== Botón de tema ===== */
+.theme-toggle { white-space: nowrap; }
+
+/* Texto blanco fijo sobre fondos de color fuerte o madera: no depende del tema. */
+.vc-btn.on,
+.pulse-btn { color: #fff; }
+.fretboard { color: #F9F9F9; }
+.pkey.black { color: #E6E8E8; }

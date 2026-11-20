@@ -9,9 +9,41 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Sacramento&display=swap" />
+  <script>
+    /* Tema: claro por defecto; el oscuro se elige con el botón 🌙 y queda
+       guardado en el equipo. Va aquí, antes de que se pinte la página, para
+       que no parpadee oscuro y luego claro. Es autocontenido a propósito:
+       así sirve igual en el aula y en la agenda. */
+    (function () {
+      var KEY = "musiaula-tema";
+      var raiz = document.documentElement;
+      try { if (localStorage.getItem(KEY) === "dark") raiz.setAttribute("data-theme", "dark"); } catch (e) {}
+
+      function pintarBotones() {
+        var oscuro = raiz.getAttribute("data-theme") === "dark";
+        var botones = document.querySelectorAll("[data-theme-toggle]");
+        for (var i = 0; i < botones.length; i++) {
+          var b = botones[i];
+          var corto = b.hasAttribute("data-corto");
+          b.textContent = oscuro ? (corto ? "☀️" : "☀️ Tema claro") : (corto ? "🌙" : "🌙 Tema oscuro");
+          b.title = oscuro ? "Cambiar al tema claro" : "Cambiar al tema oscuro";
+        }
+      }
+
+      document.addEventListener("click", function (e) {
+        var b = e.target && e.target.closest ? e.target.closest("[data-theme-toggle]") : null;
+        if (!b) return;
+        var oscuro = raiz.getAttribute("data-theme") !== "dark";
+        if (oscuro) raiz.setAttribute("data-theme", "dark"); else raiz.removeAttribute("data-theme");
+        try { localStorage.setItem(KEY, oscuro ? "dark" : "light"); } catch (e2) {}
+        pintarBotones();
+      });
+      document.addEventListener("DOMContentLoaded", pintarBotones);
+    })();
+  </script>
   <!-- El ?v= fuerza al navegador a descargar la versión nueva en cada publicación.
        Al publicar cambios de CSS o JS, subir el número aquí y en el script de abajo. -->
-  <link rel="stylesheet" href="./styles.css?v=35" />
+  <link rel="stylesheet" href="./styles.css?v=37" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -49,6 +81,7 @@
           <button type="button" id="registerBtn" class="secondary full">Crear cuenta nueva</button>
         </div>
         <p class="hint center"><button type="button" id="resetPassword" class="link-plain">¿Olvidaste tu contraseña?</button></p>
+        <p class="hint center"><button type="button" class="link-plain theme-toggle" data-theme-toggle>🌙 Tema oscuro</button></p>
       </form>
     </div>
   </section>
@@ -68,7 +101,7 @@
       <form id="joinForm" class="card form-card">
         <div class="section-head">
           <h2>Entrar al aula</h2>
-          <button type="button" id="logoutBtn" class="tiny">Cerrar sesión</button>
+          <span class="actions"><button type="button" class="tiny theme-toggle" data-theme-toggle>🌙 Tema oscuro</button><button type="button" id="logoutBtn" class="tiny">Cerrar sesión</button></span>
         </div>
         <p class="hint" id="userBadge"></p>
 
@@ -197,6 +230,7 @@
         <span id="audioModeChip" class="status audio-chip">🎤 Modo voz</span>
         <span id="metroChip" class="status metro-chip hidden">♩ Metrónomo</span>
         <span id="connectionStatus" class="status offline">Preparando aula</span>
+        <button type="button" class="secondary theme-toggle" data-theme-toggle data-corto title="Cambiar al tema oscuro">🌙</button>
         <button id="toggleControls" class="secondary" title="Cambia cómo se ven los botones de micrófono, cámara, etc.: siempre, que se escondan solos, u ocultos">🎛️ Botones: siempre</button>
         <button id="tipsOpen" class="secondary teacher-only" title="Recordatorio de todo lo que puedes hacer">💡 ¿Qué puedo hacer?</button>
         <button id="copyClassLink" class="secondary">Copiar enlace</button>
@@ -552,6 +586,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=47"></script>
+  <script type="module" src="./app.js?v=48"></script>
 </body>
 </html>

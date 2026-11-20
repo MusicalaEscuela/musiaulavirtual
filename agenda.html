@@ -9,7 +9,39 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Sacramento&display=swap" />
-  <link rel="stylesheet" href="./styles.css?v=26" />
+  <script>
+    /* Tema: claro por defecto; el oscuro se elige con el botón 🌙 y queda
+       guardado en el equipo. Va aquí, antes de que se pinte la página, para
+       que no parpadee oscuro y luego claro. Es autocontenido a propósito:
+       así sirve igual en el aula y en la agenda. */
+    (function () {
+      var KEY = "musiaula-tema";
+      var raiz = document.documentElement;
+      try { if (localStorage.getItem(KEY) === "dark") raiz.setAttribute("data-theme", "dark"); } catch (e) {}
+
+      function pintarBotones() {
+        var oscuro = raiz.getAttribute("data-theme") === "dark";
+        var botones = document.querySelectorAll("[data-theme-toggle]");
+        for (var i = 0; i < botones.length; i++) {
+          var b = botones[i];
+          var corto = b.hasAttribute("data-corto");
+          b.textContent = oscuro ? (corto ? "☀️" : "☀️ Tema claro") : (corto ? "🌙" : "🌙 Tema oscuro");
+          b.title = oscuro ? "Cambiar al tema claro" : "Cambiar al tema oscuro";
+        }
+      }
+
+      document.addEventListener("click", function (e) {
+        var b = e.target && e.target.closest ? e.target.closest("[data-theme-toggle]") : null;
+        if (!b) return;
+        var oscuro = raiz.getAttribute("data-theme") !== "dark";
+        if (oscuro) raiz.setAttribute("data-theme", "dark"); else raiz.removeAttribute("data-theme");
+        try { localStorage.setItem(KEY, oscuro ? "dark" : "light"); } catch (e2) {}
+        pintarBotones();
+      });
+      document.addEventListener("DOMContentLoaded", pintarBotones);
+    })();
+  </script>
+  <link rel="stylesheet" href="./styles.css?v=37" />
 </head>
 <body>
   <div id="toast" class="toast" aria-live="polite"></div>
@@ -22,6 +54,7 @@
       <p class="subtitle small">Panel de coordinación. Solo para los correos autorizados a agendar clases.</p>
       <button id="googleLogin" class="google-btn">Continuar con Google</button>
       <p id="gateMsg" class="hint center"></p>
+      <p class="hint center"><button type="button" class="link-plain theme-toggle" data-theme-toggle>🌙 Tema oscuro</button></p>
     </div>
   </section>
 
