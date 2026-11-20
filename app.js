@@ -794,6 +794,8 @@ function avisarProblemasDeMedios() {
     }
     if (m.modo !== "instrumento") avisosDados.delete(`${id}:instrumento`);
 
+    // "inestable" no se le avisa al docente: puede ser de su propia red, y
+    // ya lo ve en el chip. Solo lo que es claramente del estudiante.
     if ((m.red === "lenta" || m.red === "equipo") && !avisosDados.has(`${id}:red`)) {
       avisosDados.add(`${id}:red`);
       toast(m.red === "lenta"
@@ -826,7 +828,9 @@ function chipsDeMedios(m) {
       ? `<span class="media-chip aviso" title="Sin cancelación de eco: si no usa audífonos, te devuelve tu propia voz">🎼 Instrumento · sin anti-eco</span>`
       : "",
     m.red === "lenta"
-      ? `<span class="media-chip aviso" title="Su internet está lento: el video se le ve y se le envía entrecortado. Ya le apareció un aviso con la opción de apagar la cámara.">📶 Red lenta</span>`
+      ? `<span class="media-chip aviso" title="Su internet no alcanza para enviar video: lo ves entrecortado. Ya le apareció un aviso con la opción de apagar la cámara.">📶 Red lenta</span>`
+      : m.red === "inestable"
+        ? `<span class="media-chip aviso" title="Su conexión pierde datos o tiene mucha demora. Puede ser su red o la tuya.">📶 Conexión inestable</span>`
       : m.red === "equipo"
         ? `<span class="media-chip aviso" title="Su computador o celular va al límite: le sugerimos cerrar otras pestañas.">💻 Equipo lento</span>`
         : ""
@@ -1283,18 +1287,31 @@ let buenasSeguidas = 0;
 let redPrevio = { lost: 0, recv: 0 };
 let avisoRedCalladoHasta = 0;
 
+// Al arrancar, el navegador no sabe cuánto internet hay: empieza mandando
+// poco (~300 kbps) y va subiendo durante los primeros 10 a 30 segundos.
+// Mientras sube, sus estadísticas dicen "limitado por ancho de banda" aunque
+// la red sea excelente. Por eso:
+//   - las parejas recién conectadas no se miden (CALENTAMIENTO_MS);
+//   - "limitado por ancho de banda" NO cuenta por sí solo: lo que cuenta es
+//     lo que de verdad se nota (pocos cuadros por segundo, pérdida, demora).
+const CALENTAMIENTO_MS = 30000;
+
 async function medirRed() {
-  if (!peers.size) return null;
   let rtt = 0;
   let salidaDisponible = Infinity;
   let lost = 0;
   let recv = 0;
-  let limitadoPor = "none";
+  let fpsEnviados = null;
+  let limitadoPorCpu = false;
+  let medidas = 0;
 
-  for (const { pc } of peers.values()) {
+  for (const entry of peers.values()) {
+    const { pc } = entry;
     if (pc.connectionState !== "connected") continue;
+    if (!entry.conectadoDesde || Date.now() - entry.conectadoDesde < CALENTAMIENTO_MS) continue;
     let reporte;
     try { reporte = await pc.getStats(); } catch { continue; }
+    medidas++;
     reporte.forEach(r => {
       if (r.type === "candidate-pair" && r.nominated && r.state === "succeeded") {
         if (r.currentRoundTripTime) rtt = Math.max(rtt, r.currentRoundTripTime * 1000);
@@ -1304,28 +1321,36 @@ async function medirRed() {
         lost += r.packetsLost || 0;
         recv += r.packetsReceived || 0;
       }
-      if (r.type === "outbound-rtp" && r.kind === "video" && r.qualityLimitationReason
-          && r.qualityLimitationReason !== "none") {
-        limitadoPor = r.qualityLimitationReason; // "bandwidth" | "cpu"
+      if (r.type === "outbound-rtp" && r.kind === "video") {
+        if (typeof r.framesPerSecond === "number") {
+          fpsEnviados = fpsEnviados === null ? r.framesPerSecond : Math.min(fpsEnviados, r.framesPerSecond);
+        }
+        if (r.qualityLimitationReason === "cpu") limitadoPorCpu = true;
       }
     });
   }
+
+  if (!medidas) return null; // nadie conectado hace más de 30 s: nada que opinar
 
   const dLost = Math.max(0, lost - redPrevio.lost);
   const dRecv = Math.max(0, recv - redPrevio.recv);
   redPrevio = { lost, recv };
   const perdida = dLost + dRecv > 50 ? dLost / (dLost + dRecv) : 0;
 
-  return { rtt, perdida, salidaDisponible, limitadoPor };
+  return { rtt, perdida, salidaDisponible, fpsEnviados, limitadoPorCpu };
 }
 
+// "lenta": MI subida no da (yo mando poco video aunque la cámara esté prendida).
+// "inestable": se pierden datos o hay mucha demora en el camino; puede ser
+//   mi red o la del otro, así que no se le echa la culpa a nadie.
+// "equipo": el procesador no alcanza a codificar el video.
 function clasificarRed(m) {
   if (!m) return "buena";
-  if (m.limitadoPor === "cpu") return "equipo";
-  const mandaVideo = !!localStream?.getVideoTracks().some(t => t.enabled) || !!screenStream;
-  if (m.perdida > 0.06) return "lenta";
-  if (m.rtt > 450) return "lenta";
-  if (mandaVideo && (m.limitadoPor === "bandwidth" || m.salidaDisponible < 250000)) return "lenta";
+  const mandaCamara = !!localStream?.getVideoTracks().some(t => t.enabled && t.readyState === "live") && !screenStream;
+
+  if (mandaCamara && m.limitadoPorCpu && m.fpsEnviados !== null && m.fpsEnviados < 12) return "equipo";
+  if (mandaCamara && (m.salidaDisponible < 180000 || (m.fpsEnviados !== null && m.fpsEnviados < 8))) return "lenta";
+  if (m.perdida > 0.08 || m.rtt > 600) return "inestable";
   return "buena";
 }
 
@@ -1348,7 +1373,7 @@ function iniciarVigiaRed() {
 
     buenasSeguidas = 0;
     malasSeguidas++;
-    if (malasSeguidas >= 2 && estadoRed !== lectura) cambiarEstadoRed(lectura);
+    if (malasSeguidas >= 3 && estadoRed !== lectura) cambiarEstadoRed(lectura);
   }, 4000);
 
   unsubscribers.push(detenerVigiaRed);
@@ -1381,8 +1406,10 @@ function mostrarAvisoRed(tipo) {
   caja.className = "net-warning";
   caja.setAttribute("role", "status");
   caja.innerHTML = tipo === "equipo"
-    ? `<p><strong>💻 Tu equipo va al límite.</strong> El video puede verse lento. Cierra otras pestañas y programas que no estés usando.</p>`
-    : `<p><strong>📶 Tu internet está lento.</strong> El video puede verse entrecortado o congelarse.${camaraPrendida ? " Apagar tu cámara deja toda la conexión para el sonido." : " Acercarte al router o desconectar otros equipos ayuda."}</p>`;
+    ? `<p><strong>💻 Tu equipo va al límite.</strong> Tu video puede verse lento. Cierra otras pestañas y programas que no estés usando.</p>`
+    : tipo === "lenta"
+      ? `<p><strong>📶 Tu internet no alcanza para enviar video.</strong> Los demás te pueden ver entrecortado.${camaraPrendida ? " Apagar tu cámara deja toda la conexión para el sonido." : " Acercarte al router o desconectar otros equipos ayuda."}</p>`
+      : `<p><strong>📶 La conexión de la clase está inestable.</strong> Puede ser tu internet o el de la otra persona: el video puede congelarse a ratos.${camaraPrendida ? " Si sigue, apagar tu cámara ayuda a que el sonido no se corte." : ""}</p>`;
 
   const acciones = document.createElement("div");
   acciones.className = "net-actions";
@@ -2632,6 +2659,8 @@ function createPeerFor(id, info = {}, { asOfferer = false } = {}) {
 
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === "connected") {
+      // Para el vigía de red: los primeros segundos de una llamada no cuentan.
+      if (!entry.conectadoDesde) entry.conectadoDesde = Date.now();
       renderStatusCount();
       tuneAudioLatency(pc);
       boostAudioBitrate(pc);

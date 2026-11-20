@@ -222,6 +222,13 @@ button:active,
   background: var(--tint-2);
   border: 1px solid var(--line);
 }
+/* .tiny va después de .primary y le pisaba el degradado: los botones
+   "principales pequeños" (Piano, Ver juntos, Apagar mi cámara…) quedaban
+   lila con texto blanco. El principal pequeño sigue siendo principal. */
+.primary.tiny {
+  background: linear-gradient(135deg, var(--blue), var(--purple) 50%, var(--pink));
+  border-color: transparent;
+}
 
 .full {
   width: 100%;
