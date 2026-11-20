@@ -5867,7 +5867,18 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
     const abiertoEn = Date.now();
     requestAnimationFrame(() => caja.focus());
 
+    // Quitar el cuadro le quita el foco, y eso dispara "blur" otra vez: sin
+    // esta marca se confirmaba dos veces, y Escape (cancelar) terminaba
+    // pintando el texto en vez de descartarlo.
+    let terminado = false;
+    const cancelar = () => {
+      if (terminado) return;
+      terminado = true;
+      caja.remove();
+    };
     const confirmar = () => {
+      if (terminado) return;
+      terminado = true;
       const texto = caja.value.trim();
       caja.remove();
       if (!texto) return;
@@ -5883,9 +5894,10 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
     caja.addEventListener("keydown", e => {
       // Enter confirma; Shift+Enter hace salto de línea; Escape cancela.
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); confirmar(); }
-      if (e.key === "Escape") caja.remove();
+      if (e.key === "Escape") cancelar();
     });
     caja.addEventListener("blur", () => {
+      if (terminado) return;
       // Un blur en los primeros instantes es el mismo toque que lo abrió
       // (pasa en algunas pantallas táctiles): se recupera el foco.
       if (Date.now() - abiertoEn < 400) { requestAnimationFrame(() => caja.focus()); return; }
