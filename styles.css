@@ -2730,3 +2730,55 @@ body.controles-auto.controles-dormidos .video-panel { cursor: none; }
 .pulse-btn { color: #fff; }
 .fretboard { color: #F9F9F9; }
 .pkey.black { color: #E6E8E8; }
+
+/* ===== Guiar al estudiante dentro de un recurso =====
+   Una flecha grande encima del recurso. No recibe clics: el estudiante sigue
+   pudiendo bajar y tocar el material mientras la ve. */
+.guia-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  margin: 0.55rem 0 0;
+}
+.guia-tools[hidden] { display: none; }
+.guia-label { font-size: 0.85rem; color: var(--muted); font-weight: 600; }
+.guia-pagina { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
+.guia-pagina input { width: 4.5rem; padding: 0.35rem 0.5rem; min-height: 34px; }
+.guia-aviso {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 9;
+  pointer-events: none;
+  padding: 1rem 1.5rem;
+  border-radius: 20px;
+  background: var(--brahms);
+  color: #fff;
+  font-size: clamp(1.1rem, 3vw, 1.7rem);
+  font-weight: 800;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(206, 0, 113, 0.45);
+  max-width: 90%;
+}
+.guia-aviso.hidden { display: none; }
+.guia-aviso.anima[data-dir="bajar"] { animation: guiaBaja 0.9s ease-in-out 3; }
+.guia-aviso.anima[data-dir="subir"] { animation: guiaSube 0.9s ease-in-out 3; }
+.guia-aviso.anima[data-dir="pagina"] { animation: guiaLatido 0.9s ease-in-out 3; }
+@keyframes guiaBaja {
+  0%, 100% { transform: translate(-50%, -50%); }
+  50% { transform: translate(-50%, -30%); }
+}
+@keyframes guiaSube {
+  0%, 100% { transform: translate(-50%, -50%); }
+  50% { transform: translate(-50%, -70%); }
+}
+@keyframes guiaLatido {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-50%, -50%) scale(1.08); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guia-aviso.anima { animation: none !important; }
+}

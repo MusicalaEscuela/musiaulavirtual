@@ -2125,10 +2125,61 @@ function startMusicMix(tabTrack) {
     const mixedTrack = dest.stream.getAudioTracks()[0];
     forEachSender("audio", sender => sender.replaceTrack(mixedTrack).catch(console.warn));
     toast("🎶 Música compartida: tu voz y la música viajan juntas a la clase.");
+
+    if (ctx.state !== "running") {
+      ctx.resume().catch(() => {});
+      setTimeout(() => {
+        if (ctx.state !== "running") {
+          toast("⚠️ El navegador tiene el sonido en pausa: toca cualquier parte del aula para que la música llegue a la clase.");
+        }
+      }, 800);
+    }
+    vigilarSonidoDePestana(ctx, musicSrc, tabTrack);
   } catch (error) {
     console.warn("No se pudo mezclar la música de la pestaña", error);
     toast("No se pudo mezclar el audio de la pestaña; el video sí se comparte.");
   }
+}
+
+// Crea o despierta el contexto de audio DENTRO del toque del botón, antes
+// de esperar al selector de pestañas (después ya no cuenta como toque).
+function despertarAudioParaMezcla() {
+  try { ensureAudio(); } catch {}
+}
+
+// ¿De verdad está llegando sonido de esa pestaña? Si a los 6 segundos no hay
+// nada, casi siempre es una de dos: la pestaña no está sonando, o se eligió
+// una ventana/pantalla (que no comparten audio) en vez de una PESTAÑA.
+function vigilarSonidoDePestana(ctx, fuente, pista) {
+  let analizador;
+  try {
+    analizador = ctx.createAnalyser();
+    analizador.fftSize = 1024;
+    fuente.connect(analizador);
+  } catch { return; }
+
+  const datos = new Float32Array(analizador.fftSize);
+  let hubo = false;
+  const inicio = Date.now();
+  const revisar = setInterval(() => {
+    if (!musicMixer || musicMixer.tabTrack !== pista || pista.readyState !== "live") {
+      clearInterval(revisar);
+      try { fuente.disconnect(analizador); } catch {}
+      return;
+    }
+    analizador.getFloatTimeDomainData(datos);
+    let suma = 0;
+    for (let i = 0; i < datos.length; i++) suma += datos[i] * datos[i];
+    if (Math.sqrt(suma / datos.length) > 0.003) hubo = true;
+
+    if (hubo || Date.now() - inicio > 6000) {
+      clearInterval(revisar);
+      try { fuente.disconnect(analizador); } catch {}
+      if (!hubo) {
+        toast("🔇 No está llegando sonido de esa pestaña. ¿Ya le diste play? Si ya suena y aun así no llega, deja de compartir y vuelve a hacerlo eligiendo una PESTAÑA (no ventana ni pantalla) con «Compartir audio» marcado.");
+      }
+    }
+  }, 300);
 }
 
 function stopMusicMix() {
@@ -2831,6 +2882,7 @@ async function toggleScreenShare() {
     stopScreenShare();
     return;
   }
+  despertarAudioParaMezcla(); // dentro del toque: ver startMusicMix
 
   let stream;
   try {
@@ -3116,6 +3168,7 @@ function montarHerramientasDeMarcar() {
     const p = norm(e);
 
     if (marcarTool === "texto") {
+      e.preventDefault(); // mismo motivo que en el pizarrón
       abrirTextoDeMarca(p, e);
       return;
     }
@@ -3162,7 +3215,8 @@ function abrirTextoDeMarca(pos, evento) {
   input.style.color = marcarColor;
   input.value = "";
   input.classList.remove("hidden");
-  input.focus();
+  const abiertoEn = Date.now();
+  requestAnimationFrame(() => input.focus());
 
   const cerrar = () => {
     input.classList.add("hidden");
@@ -3179,7 +3233,10 @@ function abrirTextoDeMarca(pos, evento) {
     }
     cerrar();
   };
-  input.onblur = cerrar;
+  input.onblur = () => {
+    if (Date.now() - abiertoEn < 400) { requestAnimationFrame(() => input.focus()); return; }
+    cerrar();
+  };
 }
 
 
@@ -3205,6 +3262,7 @@ async function toggleAudioOnlyShare() {
     toast("Ya estás compartiendo pantalla: detenla primero.");
     return;
   }
+  despertarAudioParaMezcla(); // dentro del toque: ver startMusicMix
 
   let stream;
   try {
@@ -4682,9 +4740,60 @@ function renderResourceStage(stage, isTeacher, closeButton) {
     if (raiz && raiz.querySelector("[data-pdf]")) {
       setupPdfSync(stage, isTeacher, { raiz, canal: p.canal });
     }
+    if (raiz && raiz.querySelector("[data-guia-aviso]")) {
+      setupGuia(isTeacher, { raiz, canal: p.canal });
+    }
   });
 }
 
+
+function setupGuia(isTeacher, { raiz, canal }) {
+  if (!firebaseReady || !roomPath) return;
+  const guiaRef = ref(db, `${roomPath}/annot/${canal}/guia`);
+
+  if (isTeacher) {
+    const n = raiz.querySelector("[data-guia-n]");
+    raiz.querySelectorAll("[data-guia-accion]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const accion = btn.dataset.guiaAccion;
+        const pagina = Math.round(Number(n?.value) || 0);
+        if (accion === "pagina" && pagina < 1) {
+          toast("Escribe el número de página y toca Ir.");
+          n?.focus();
+          return;
+        }
+        set(guiaRef, { accion, n: pagina || null, at: Date.now(), by: CLIENT_ID }).catch(() => {});
+        toast(accion === "pagina" ? `Le mostramos: 📄 ve a la página ${pagina}.`
+          : accion === "bajar" ? "Le mostramos: ⬇ baja." : "Le mostramos: ⬆ sube.");
+      });
+    });
+    n?.addEventListener("keydown", e => {
+      if (e.key === "Enter") raiz.querySelector('[data-guia-accion="pagina"]')?.click();
+    });
+    return;
+  }
+
+  const aviso = raiz.querySelector("[data-guia-aviso]");
+  let primera = true; // lo que ya estaba guardado de antes no se muestra
+  let ocultar = null;
+  annotUnsubs.push(onValue(guiaRef, snap => {
+    const g = snap.val();
+    if (primera) { primera = false; return; }
+    if (!g || g.by === CLIENT_ID) return;
+    aviso.textContent = g.accion === "pagina" ? `📄 Ve a la página ${g.n}`
+      : g.accion === "bajar" ? "⬇ Tu profe bajó: baja tú también"
+      : "⬆ Tu profe subió: sube tú también";
+    aviso.dataset.dir = g.accion;
+    aviso.classList.remove("hidden");
+    // Reinicia la animación aunque llegue la misma instrucción dos veces.
+    aviso.classList.remove("anima");
+    void aviso.offsetWidth;
+    aviso.classList.add("anima");
+    clearTimeout(ocultar);
+    ocultar = setTimeout(() => aviso.classList.add("hidden"), 6000);
+  }));
+  annotUnsubs.push(() => clearTimeout(ocultar));
+}
 
 /* Aviso honesto de qué ve el estudiante, según el tipo de material.
    No todos se comportan igual y un aviso genérico sería falso la mitad de
@@ -4709,7 +4818,7 @@ function notaDeSincronia(embed) {
   if (!tipo) return null;
 
   // PDF, documentos y páginas web: todo lo que va dentro de un iframe ajeno.
-  return { clase: "aviso", texto: "Lo que ves aquí es TU vista: si bajas, cambias de página o haces zoom, el estudiante sigue donde estaba. Para que vea exactamente lo tuyo, comparte pantalla 🖥️. Lo que sí ve al instante es lo que dibujes o señales encima." };
+  return { clase: "aviso", texto: "Lo que ves aquí es TU vista: si bajas o cambias de página, el estudiante sigue donde estaba (este sitio no deja moverlo desde aquí). Usa ⬆ Sube / ⬇ Baja / Página y le aparece una flecha grande encima del recurso. Para que vea exactamente lo tuyo, comparte pantalla 🖥️." };
 }
 
 // Un material dentro del escenario: su visor, sus herramientas y su enlace.
@@ -4764,6 +4873,17 @@ function panelDeRecurso({ material, lado }, isTeacher, dobles) {
     ? `<p class="sync-note ok" data-pdf-nota-alumno hidden>Vas en la misma página que tu profe: la pasa y aquí pasa sola.</p>`
     : "";
 
+  const guiable = embed?.type === "iframe" || esPdf;
+  const guia = isTeacher && media && guiable ? `
+    <div class="guia-tools" data-guia ${esPdf ? "hidden" : ""}>
+      <span class="guia-label">Guiar al estudiante:</span>
+      <button type="button" class="secondary tiny" data-guia-accion="subir" title="Le aparece una flecha grande: sube">⬆ Sube</button>
+      <button type="button" class="secondary tiny" data-guia-accion="bajar" title="Le aparece una flecha grande: baja">⬇ Baja</button>
+      <label class="guia-pagina">Página <input type="number" min="1" max="999" inputmode="numeric" data-guia-n /></label>
+      <button type="button" class="secondary tiny" data-guia-accion="pagina" title="Le aparece en grande a qué página ir">Ir</button>
+    </div>
+  ` : "";
+
   const sync = isTeacher && media ? notaDeSincronia(embed) : null;
   const notaSync = sync ? `<p class="sync-note ${sync.clase}">${escapeHtml(sync.texto)}</p>` : "";
 
@@ -4782,10 +4902,12 @@ function panelDeRecurso({ material, lado }, isTeacher, dobles) {
           ${media}
           <canvas class="annot-canvas" data-annot-canvas></canvas>
           <div class="annot-pointer hidden" data-annot-pointer>👆</div>
+          <div class="guia-aviso hidden" data-guia-aviso aria-live="polite"></div>
         </div>
       ` : ""}
       ${pdfNav}
       ${tools}
+      ${guia}
       ${notaSync}
       ${pdfNotaAlumno}
       ${blockNote}
@@ -5465,11 +5587,12 @@ async function setupPdfSync(stage, isTeacher, { raiz, canal } = {}) {
     caja.innerHTML = `<iframe src="${escapeHtml(visor)}" allow="fullscreen" allowfullscreen referrerpolicy="no-referrer"></iframe>`;
     nav?.remove();
     notaAlumno?.remove();
+    zona.querySelector("[data-guia]")?.removeAttribute("hidden");
     // El aviso de sincronía se vuelve mentira si caemos aquí: se corrige.
     const aviso = zona.querySelector(".sync-note");
     if (aviso) {
       aviso.className = "sync-note aviso";
-      aviso.textContent = "Este PDF no se deja sincronizar, así que cada quien lo navega por su lado. Para que vea lo tuyo, comparte pantalla 🖥️.";
+      aviso.textContent = "Este PDF no se deja sincronizar, así que cada quien lo navega por su lado. Usa ⬆ Sube / ⬇ Baja / Página para guiar al estudiante, o comparte pantalla 🖥️ para que vea exactamente lo tuyo.";
     }
   };
 
@@ -5740,7 +5863,9 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
     caja.style.top = (pos.y * 100) + "%";
     caja.style.color = annotColor;
     media.appendChild(caja);
-    caja.focus();
+    // El foco se da en el siguiente cuadro, cuando el toque ya terminó.
+    const abiertoEn = Date.now();
+    requestAnimationFrame(() => caja.focus());
 
     const confirmar = () => {
       const texto = caja.value.trim();
@@ -5760,7 +5885,12 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); confirmar(); }
       if (e.key === "Escape") caja.remove();
     });
-    caja.addEventListener("blur", confirmar);
+    caja.addEventListener("blur", () => {
+      // Un blur en los primeros instantes es el mismo toque que lo abrió
+      // (pasa en algunas pantallas táctiles): se recupera el foco.
+      if (Date.now() - abiertoEn < 400) { requestAnimationFrame(() => caja.focus()); return; }
+      confirmar();
+    });
   };
   tools.querySelector("[data-annot-clear]")?.addEventListener("click", () => {
     annotStrokes = new Map();
@@ -5802,6 +5932,9 @@ function setupResourceAnnotations(stage, isTeacher, { raiz, annotId } = {}) {
 
   canvas.addEventListener("pointerdown", e => {
     if (annotTool === "texto") {
+      // Sin esto, el mismo toque le quita el foco al cuadro recién abierto
+      // y se cierra vacío al instante.
+      e.preventDefault();
       abrirCuadroTexto(norm(e));
       return;
     }
